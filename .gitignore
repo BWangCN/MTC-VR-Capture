@@ -1,0 +1,23 @@
+# --- Unity generated ---
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]serSettings/
+*.csproj
+*.sln
+*.user
+
+# --- Third-party (obtain separately, see README) ---
+# SMPL-X for Unity — MPI research license, do NOT redistribute
+ThirdParty/SMPLX/Models/
+ThirdParty/SMPLX/Textures/
+*.fbx
+# PICO Unity Integration SDK — download from PICO developer site
+ThirdParty/PICO-Unity-Integration-SDK/
+
+# --- large capture data ---
+*.csv
+!docs/**/*.csv
