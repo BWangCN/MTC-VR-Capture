@@ -1,0 +1,16 @@
+# Created by Open3D 
+# object name: blanket10
+newmtl blanket10_0
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd blanket10_0.png
+newmtl blanket10_1
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd blanket10_1.png
+newmtl blanket10_2
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000

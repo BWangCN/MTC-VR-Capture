@@ -1,0 +1,11 @@
+# Created by Open3D 
+# object name: book38
+newmtl book38_0
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd book38_0.png
+newmtl book38_1
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000

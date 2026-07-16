@@ -1,0 +1,16 @@
+# Created by Open3D 
+# object name: suitcase38
+newmtl suitcase38_0
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd suitcase38_0.png
+newmtl suitcase38_1
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd suitcase38_1.png
+newmtl suitcase38_2
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000

@@ -1,0 +1,11 @@
+# Created by Open3D 
+# object name: bed09
+newmtl bed09_0
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd bed09_0.png
+newmtl bed09_1
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000

@@ -1,0 +1,11 @@
+# Unity build cache (regenerable)
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Ll]ogs/
+[Uu]serSettings/
+*.csproj
+*.sln
+*.user
+.vs/

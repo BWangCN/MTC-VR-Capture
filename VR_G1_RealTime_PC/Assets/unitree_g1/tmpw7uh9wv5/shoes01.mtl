@@ -1,0 +1,11 @@
+# Created by Open3D 
+# object name: shoes01
+newmtl shoes01_0
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd shoes01_0.png
+newmtl shoes01_1
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000

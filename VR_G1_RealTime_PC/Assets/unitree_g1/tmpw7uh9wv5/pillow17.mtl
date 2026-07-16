@@ -1,0 +1,16 @@
+# Created by Open3D 
+# object name: pillow17
+newmtl pillow17_0
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd pillow17_0.png
+newmtl pillow17_1
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd pillow17_1.png
+newmtl pillow17_2
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000

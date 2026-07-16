@@ -1,0 +1,7 @@
+# ALVR binaries (downloaded v20.14.1, regenerable) — keep out of git.
+# Track only the docs (SETUP_WIFI.md) and this .gitignore.
+pc_streamer/
+headset_apk/
+*.apk
+*.zip
+*.exe

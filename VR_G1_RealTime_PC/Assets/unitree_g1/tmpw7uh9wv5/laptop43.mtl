@@ -1,0 +1,11 @@
+# Created by Open3D 
+# object name: laptop43
+newmtl laptop43_0
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
+map_Kd laptop43_0.png
+newmtl laptop43_1
+Ka 1.000 1.000 1.000
+Kd 1.000 1.000 1.000
+Ks 0.000 0.000 0.000
