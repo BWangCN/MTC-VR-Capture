@@ -2217,6 +2217,87 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1703752169}
   m_Mesh: {fileID: 10208, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!1 &1706770840
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1706770842}
+  - component: {fileID: 1706770841}
+  m_Layer: 0
+  m_Name: OptiTrackPoints
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1706770841
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1706770840}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: faa0ae2f85980ac4ea95178c6945d94a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  listenPort: 5005
+  pointPrefab: {fileID: 0}
+  pointScale: 0.05
+  pointParent: {fileID: 1706770842}
+  pointSmoothingRate: 35
+  pointVisibilityGraceSeconds: 0.08
+  xrOrigin: {fileID: 562667901}
+  vrCamera: {fileID: 799274688}
+  cameraOffsetFromRigidBody: {x: 0, y: 0, z: 0}
+  rigidBodyRotationOffsetEuler: {x: 0, y: 0, z: 0}
+  motiveLocalForwardAxis: {x: 1, y: 0, z: 0}
+  motiveLocalUpAxis: {x: 0, y: 0, z: 1}
+  useYawOnly: 1
+  positionCorrectionRate: 0.25
+  rotationCorrectionRate: 0.3
+  maximumCorrectionSpeedMetersPerSecond: 0.25
+  maximumRotationCorrectionDegreesPerSecond: 10
+  maximumMeanErrorMeters: 0.005
+  motivePoseTimeoutSeconds: 0.25
+  maximumAcceptedPositionJumpMeters: 0
+  maximumAcceptedYawJumpDegrees: 90
+  convertFromMotiveZUp: 1
+  positionOffset: {x: 0, y: 0, z: 0}
+  positionScale: 1
+  apartmentRoot: {fileID: 1115403574}
+  contactRadiusMeters: 0.02
+  requiredTouchingPoints: 1
+  requiredContactFrames: 1
+  logContactChanges: 1
+  collisionHapticAmplitude: 0.7
+  collisionHapticDurationSeconds: 0.15
+  repeatHapticsWhileTouching: 1
+  hapticRepeatIntervalSeconds: 0.15
+  logFusionStatus: 0
+  logIntervalSeconds: 0.5
+  contactCheckIntervalSeconds: 0.04
+  logIndividualContacts: 0
+--- !u!4 &1706770842
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1706770840}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1708785535
 GameObject:
   m_ObjectHideFlags: 0
@@ -2589,3 +2670,4 @@ SceneRoots:
   - {fileID: 998017828}
   - {fileID: 1728717492}
   - {fileID: 543467879}
+  - {fileID: 1706770842}

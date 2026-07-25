@@ -117,7 +117,7 @@
       "url": "https://packages.unity.com"
     },
     "com.unity.pico.livepreview": {
-      "version": "file:C:/Users/Wayne/Desktop/GMU/PhD/Humanoid/Unity Live Preview Plugin",
+      "version": "file:C:/Users/Ryan/Downloads/Unity Live Preview Plugin-1.0.5-20250211",
       "depth": 0,
       "source": "local",
       "dependencies": {
