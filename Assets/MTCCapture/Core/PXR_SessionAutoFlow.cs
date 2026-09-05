@@ -48,7 +48,12 @@ public class PXR_SessionAutoFlow : MonoBehaviour
     public float eyeToTopOfHeadOffset = 0.12f;
 
     [Header("Embodiment Params (meters)")]
-    public float g1HeightMeters = 1.27f;
+    // 1.32 = 地板到头顶，腿伸直。实测自 benchmark 自带的 G1 模型
+    // (mtc_corridor/assets/g1/mjcf/g1.xml)：伸直 1.323 m，膝弯 30° 1.301 m，
+    // 膝弯 45° 1.275 m —— 旧的 1.27 是深蹲站姿的高度。benchmark 侧的
+    // constraint_rules.G1_STANDING_HEIGHT_M 也是 1.32，两边必须一致，否则
+    // 采到的动作比 G1 小一号，横梁处系统性差约 5 cm。
+    public float g1HeightMeters = 1.32f;
 
     [Header("Scale Pivot")]
     public bool pivotAtHMD = true;

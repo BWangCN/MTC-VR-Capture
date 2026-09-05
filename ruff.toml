@@ -1,0 +1,30 @@
+# Formatting + lint config for new/modified code.
+# Vendored or frozen code is excluded — do not bulk-reformat it.
+
+target-version = "py311"
+line-length = 100
+
+exclude = [
+    "scripts/retarget/gmr_overrides",  # vendored GMR overrides — keep diffable vs upstream
+    "collected_envs",
+]
+
+[lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # bugbear
+]
+ignore = [
+    "E501",  # long lines in docstrings/comments; formatter handles code lines
+]
+
+[lint.isort]
+known-first-party = ["mtc_corridor", "challenge", "scripts"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

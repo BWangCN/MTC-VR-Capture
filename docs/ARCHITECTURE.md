@@ -18,6 +18,58 @@ PXR_24PointMapper           Core/  — local→world transform, axis/yaw adapter
 CsvReplayTrimmer            Trimming/ — Editor scrub + trim into categorized clips
 ```
 
+Upstream of all of that, and downstream of the CSV, two more stages:
+
+```
+make_standard_envs.py       envgen/  — (seed, tier) -> CorridorEnv -> YAML + gen_meta.json
+        │                             obstacle builders in new_obstacles.py
+        ▼
+export_to_unity.py          envgen/  — CorridorEnv -> flat scene JSON -> FBX (Blender headless)
+        │                             the JSON is the human/LLM-editable contract
+        ▼
+AtomicEnvSet.ImportAll()    Editor/  — import this session's FBX, retire the previous set
+        │                             selection driven by _index/session_filter.txt
+        ▼
+MTC_AtomicSession           Session/ — on-headset: walk the env list, switch, record
+        │                             writes mtc_session_manifest.jsonl per take
+        ▼   (adb pull)
+capture_pipeline.py         tools/   — stow-batch: manifest -> <day>/<env_id>/raw/,
+        │                             each take paired with its own collision log
+        ▼
+segment_turning_point.py    tools/experimental/ — reference impl: cut on pelvis turning points
+```
+
+## Environment generation (`envgen/`)
+
+`generate_corridor(seed, tier)` is the single entry point and is **deterministic** —
+the same seed yields the same corridor, and downstream analysis relies on it.
+Thread any new randomness through the seeded `rng` argument; module-level
+`random`/`np.random` and `hash()` both silently break it.
+
+Obstacles carry a multi-label set of geometric constraints
+(`mtc_corridor/constraint_rules.py`) calibrated to the Unitree G1: standing height
+1.32 m, shoulder width 0.45 m, body thickness 0.20 m. Changing those formulas or
+the tier ranges changes what every previously generated environment means.
+
+Named env sets live in `SPECS` in `make_standard_envs.py`. `_atomic4_spec()` is the
+smallest complete example of adding one: a slug, an obstacle type, and a per-level
+parameter band.
+
+Coordinate frames: the generator works in `+x` = start→goal, `+y` = lateral,
+`+z` = up. FBX export is Y-up for Unity. The exported scene shifts the corridor so
+start = (0,0,0). See CSV_FORMAT.md for the capture-side frames.
+
+## Filing and segmentation (`tools/`)
+
+`capture_pipeline.py stow-batch` is the only correct way to file a multi-env
+session: it reads `mtc_session_manifest.jsonl` and routes each take to the env it
+was recorded in. Plain `stow` handles a single file and pairs the collision log by
+picking the newest in the folder — right for one long take, wrong for a session.
+
+`segment_turning_point.py` cuts on the turning points of the pelvis trajectory
+rather than on standing intervals, because people do not reliably stop between
+passes. Its output is candidates for review, not a finished dataset.
+
 Session orchestration wraps the mapper:
 - **PXR_SessionAutoFlow** — hands-free: warmup → tracker calib → 5 s height calib → embodiment scale → (optional) spawn/align → BeginRecording.
 - **PXR_SessionControlPanel** — manual VR UI: Calibrate → Enter World → Start/Stop Recording buttons (uses `UIFollowHMD` to keep the canvas in front of the head).

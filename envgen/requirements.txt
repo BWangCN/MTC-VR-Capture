@@ -1,0 +1,5 @@
+# Environment generation only. Python 3.11.
+# (The full benchmark also needs mujoco/trimesh/gymnasium; generation does not.)
+numpy
+pyyaml
+matplotlib      # scripts/preview_new_envs.py and mtc_corridor/viz.py

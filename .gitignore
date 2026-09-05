@@ -21,3 +21,10 @@ ThirdParty/PICO-Unity-Integration-SDK/
 # --- large capture data ---
 *.csv
 !docs/**/*.csv
+
+# --- generated environments + pulled captures (repo-local defaults) ---
+captures/
+envgen/fbx_out/
+envgen/**/__pycache__/
+**/__pycache__/
+*.pyc

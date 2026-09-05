@@ -38,8 +38,8 @@ public class PXR_SessionControlPanel : MonoBehaviour
     [Tooltip("站直采样秒数")]
     public float calibrationSeconds = 5f;
 
-    [Tooltip("机器人目标身高（米）。G1=1.27m")]
-    public float targetRobotHeightMeters = 1.27f;
+    [Tooltip("机器人目标身高（米，地板到头顶、腿伸直）。G1=1.32m")]
+    public float targetRobotHeightMeters = 1.32f;
 
     [Tooltip("从 24 点中选 head / left_ankle(or left_foot_index) / right_ankle(or right_foot_index) 的索引")]
     public int headIndex = (int)PositionIndex.head;

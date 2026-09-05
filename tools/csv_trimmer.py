@@ -31,11 +31,12 @@ import os
 import sys
 from pathlib import Path
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider, Button
+from matplotlib.widgets import Button, Slider
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 # ── Joint topology (same as csv24_to_robot.py) ─────────────────────────

@@ -1,11 +1,20 @@
 # MTC-VR-Capture
 
-**24-point SMPL body-motion capture + trimming, on a PICO VR headset (Unity 2022.3).**
+**The complete MTC data-collection pipeline: generate corridors, capture 24-point SMPL body
+motion on a PICO VR headset, file the takes, and trim them into clips.**
 
-This repository contains the *capture* and *trimming* code from the MTC data-collection
-pipeline: it reads full-body 24-joint tracking from a PICO headset + motion trackers,
-transforms it into world / room-local coordinates, and records it to CSV
-(`pxr24_csv_v2`). A desktop trimmer then cuts long recordings into clean per-take clips.
+Four stages, all in this repo:
+
+| Stage | What it does | Where |
+|---|---|---|
+| **1. Generate** | Deterministic cluttered corridors from `(seed, tier)` → YAML + FBX | `envgen/` |
+| **2. Capture** | 24-joint tracking → world / room-local → CSV (`pxr24_csv_v2`) | `Assets/MTCCapture/` |
+| **3. File** | Route each take to the env it was recorded in, by session manifest | `tools/capture_pipeline.py` |
+| **4. Trim** | Cut long recordings into clean per-take clips | Unity trimmer, `tools/` |
+
+**Start with [docs/RUNBOOK.md](docs/RUNBOOK.md)** — one session end to end.
+When something breaks, [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) lists the
+failures this pipeline has actually hit.
 
 > **Migration note.** The intended next step is to port this from PICO to **Meta Quest 3**.
 > Only **one** file touches the PICO SDK — `Core/PXR_BodyTrackingFeed.cs`. Everything
@@ -15,6 +24,7 @@ transforms it into world / room-local coordinates, and records it to CSV
 ---
 
 ## Table of contents
+0. **[Runbook — one session end to end](docs/RUNBOOK.md)** ← start here
 1. [What's in here / what's not](#1-whats-in-here--whats-not)
 2. [Prerequisites](#2-prerequisites)
 3. [Third-party dependencies you must obtain](#3-third-party-dependencies-you-must-obtain)
@@ -46,8 +56,34 @@ Assets/MTCCapture/
 └── Replay/
     └── PXR_24Point_CSV_Replay.cs    # Gizmos stick-figure replay (optional QA)
 
-tools/csv_trimmer.py                 # Python desktop trimmer (alternative)
-docs/                                # architecture + CSV spec
+├── Session/
+│   ├── MTC_AtomicSession.cs         # on-headset multi-env session: switch env, record
+│   ├── Body24Collision.cs           # per-joint collision probe against env meshes
+│   └── GoalZone.cs                  # end-of-corridor trigger
+└── Editor/
+    ├── AtomicEnvSet.cs              # import this session's envs; retire the last set
+    ├── MtcCaptureRoot.cs            # resolves MTC_CAPTURE_ROOT + env dir layout
+    ├── MTC_FixCaptureSession.cs     # one-shot: wire hmd, import envs, save scene
+    ├── TrimCaptureMode.cs           # toggle the scene between Capture and Trim
+    ├── ImportStandardEnvs.cs        # older single-set import path
+    ├── PlaceMtcCorridorScenes.cs    # v1 corridor placement under WorldOrigin
+    ├── VerifyScenePlacement.cs      # check placed meshes against the source YAML
+    └── RemoveMissingEnvObjects.cs   # clean up stale env objects
+
+envgen/
+├── mtc_corridor/                    # generator package (deterministic in seed+tier)
+├── scripts/make_standard_envs.py    # named env sets (SPECS: atomic .. atomic4)
+├── scripts/new_obstacles.py         # obstacle builders (step rows, half walls)
+├── scripts/export_to_unity.py       # corridor → scene JSON → FBX (Blender headless)
+└── requirements.txt
+
+tools/
+├── capture_pipeline.py              # stow-batch: manifest-driven filing of a session
+├── experimental/
+│   └── segment_turning_point.py     # reference impl: turning-point segmentation
+└── csv_trimmer.py                   # Python desktop trimmer (alternative)
+
+docs/                                # runbook, troubleshooting, architecture, CSV spec
 ```
 
 **NOT included** (obtain separately — §3):
@@ -228,9 +264,25 @@ Also written there: one-shot diagnostic dumps `pxr_24pts_raw_local_*.txt` and `b
 
 ### Pull the CSVs to your PC
 ```bash
-adb pull /storage/emulated/0/Android/data/<your.bundle.id>/files/  ./captures/
+adb pull /storage/emulated/0/Android/data/<your.bundle.id>/files/  ./staging/
 ```
-(or use MTP / the headset file manager).
+(or use MTP / the headset file manager). On Windows, `adb pull` into a directory
+drops the last character of every filename — see
+[TROUBLESHOOTING](docs/TROUBLESHOOTING.md#adb-pull-truncates-every-filename).
+
+### File the takes by environment
+A session recorded across several environments needs each take routed to the env it
+was actually recorded in — the on-device filename does not carry that. The session
+manifest does.
+
+```bash
+python tools/capture_pipeline.py stow-batch --from ./staging --dry-run
+python tools/capture_pipeline.py stow-batch --from ./staging          # copies
+python tools/capture_pipeline.py stow-batch --from ./staging --move   # once verified
+```
+
+Takes land in `$MTC_CAPTURE_ROOT/<MM-DD-YYYY>/<env_id>/raw/`, each paired with its
+own collision log. See [RUNBOOK §4](docs/RUNBOOK.md).
 
 ### Trim — Unity Editor (`CsvReplayTrimmer`)
 1. In a desktop Unity scene, add an empty GameObject with **`CsvReplayTrimmer`**.
