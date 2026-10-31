@@ -56,7 +56,25 @@ def check(executable):
         assert summary["frames_written"] == 100 and summary["recording_drops"] == 0 and not summary["error"]
         frames = [json.loads(line) for line in (paced / "frames.jsonl").read_text().splitlines()]
         assert len(frames) == 100 and all(len(f["other_markers"]) == 1000 for f in frames)
+        cropped = next((root / "filtered").iterdir())
+        original = [json.loads(line) for line in (cropped / "frames.jsonl").read_text().splitlines()]
+        selected = [json.loads(line) for line in (cropped / "filtered_frames.jsonl").read_text().splitlines()]
+        assert [f["frame"] for f in original] == [f["frame"] for f in selected] == [1, 2, 3, 4, 5, 6]
+        assert all(len(f["other_markers"]) == 7 for f in original), "Raw recording was cropped"
+        assert [len(f["other_markers"]) for f in selected] == [3, 3, 0, 7, 0, 3]
+        expected = [[10, 20, 3], [9.7, 19.7, 1], [10.3, 20.3, 3.5]]
+        assert all(abs(a-b) < 1e-5 for actual, target in zip(selected[0]["other_markers"], expected) for a,b in zip(actual,target))
+        assert selected[0]["body_filter"]["bounds_min_m"] == [-0.3, -2, -0.3]
+        assert selected[0]["body_filter"]["bounds_max_m"] == [0.3, 0.5, 0.3]
+        assert [m["id"] for m in selected[0]["labeled_markers"]] == [601]
+        assert [m["id"] for m in selected[0]["assets"][0]["markers"]] == [601]
+        assert selected[0]["marker_sets"][0]["positions"][3:] == [None] * 4
+        assert selected[0]["rigid_bodies"] == original[0]["rigid_bodies"], "Pico/body context was filtered"
+        assert not selected[2]["body_filter"]["valid"] and not selected[4]["body_filter"]["valid"]
+        assert not selected[3]["body_filter"]["enabled"]
+        assert json.loads((cropped / "summary.json").read_text())["invalid_filter_frames"] == 2
         print("PASS: parsed all NatNet frame sections, Pico CSV, metadata, source gaps and incomplete-take summary.")
+        print("PASS: filtered recording bounds, headset transform/movement, stale/invalid updates, delayed packets, raw preservation and frame synchronization.")
 
 
 if __name__ == "__main__":

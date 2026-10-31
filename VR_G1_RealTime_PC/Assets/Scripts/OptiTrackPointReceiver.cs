@@ -39,6 +39,71 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 	[SerializeField]
 	private float pointVisibilityGraceSeconds = 0.2f;
 
+	[Header("Headset Marker Filter (Right B)")]
+	[Tooltip("Show only markers inside the headset-following box. Toggle with right-controller B.")]
+	[SerializeField]
+	private bool filterMarkersAroundHeadset;
+
+	private const float MarkerFilterBelowMeters = 2f;
+	private const float MarkerFilterAboveMeters = 0.5f;
+	private const float MarkerFilterHorizontalMeters = 0.3f;
+	private const float MarkerFilterBoundaryTolerance = 0.00001f;
+
+	public bool IsMarkerFilterEnabled => filterMarkersAroundHeadset;
+
+	[ContextMenu("Toggle Headset Marker Filter")]
+	public void ToggleMarkerFilter()
+	{
+		if (!filterMarkersAroundHeadset && vrCamera == null)
+		{
+			Debug.LogWarning("Cannot enable the marker filter without the tracked VR camera.", this);
+			return;
+		}
+		filterMarkersAroundHeadset = !filterMarkersAroundHeadset;
+		Debug.Log($"Mocap marker filter: {(filterMarkersAroundHeadset ? "ON" : "OFF")} " +
+			"(2 m below, 0.5 m above, 0.3 m in each horizontal direction from headset).", this);
+		SmoothAndCullPointVisuals();
+	}
+
+	private bool MarkerPassesHeadsetFilter(Vector3 worldPosition)
+	{
+		if (!filterMarkersAroundHeadset || vrCamera == null) return true;
+		// World-up box follows the headset's position, without tilting/rotating when
+		// the wearer looks around. Test aligned world metres, never parent-local units.
+		Vector3 delta = worldPosition - vrCamera.position;
+		return Mathf.Abs(delta.x) <= MarkerFilterHorizontalMeters + MarkerFilterBoundaryTolerance &&
+			Mathf.Abs(delta.z) <= MarkerFilterHorizontalMeters + MarkerFilterBoundaryTolerance &&
+			delta.y >= -MarkerFilterBelowMeters - MarkerFilterBoundaryTolerance &&
+			delta.y <= MarkerFilterAboveMeters + MarkerFilterBoundaryTolerance;
+	}
+
+	// Native recordings keep Motive coordinates. Supply the same conversion and
+	// alignment used by live markers so both crop against the same headset box.
+	public bool TryGetMarkerFilterTransform(out Matrix4x4 rawToHeadsetDelta)
+	{
+		rawToHeadsetDelta = Matrix4x4.identity;
+		if (vrCamera == null) return false;
+		Vector3 zero = MotivePointToWorld(Vector3.zero);
+		Vector3 x = MotivePointToWorld(Vector3.right) - zero;
+		Vector3 y = MotivePointToWorld(Vector3.up) - zero;
+		Vector3 z = MotivePointToWorld(Vector3.forward) - zero;
+		Vector3 translation = zero - vrCamera.position;
+		rawToHeadsetDelta.SetColumn(0, new Vector4(x.x, x.y, x.z, 0));
+		rawToHeadsetDelta.SetColumn(1, new Vector4(y.x, y.y, y.z, 0));
+		rawToHeadsetDelta.SetColumn(2, new Vector4(z.x, z.y, z.z, 0));
+		rawToHeadsetDelta.SetColumn(3, new Vector4(translation.x, translation.y, translation.z, 1));
+		for (int r = 0; r < 3; r++)
+			for (int c = 0; c < 4; c++)
+				if (float.IsNaN(rawToHeadsetDelta[r, c]) || float.IsInfinity(rawToHeadsetDelta[r, c])) return false;
+		return true;
+	}
+
+	private Vector3 MotivePointToWorld(Vector3 motivePosition)
+	{
+		Vector3 converted = ConvertPosition(motivePosition);
+		return hasPointAlignment ? mocapToUnityRotation * converted + mocapToUnityTranslation : converted;
+	}
+
 	[Header("XR References")]
 	[Tooltip("Assign the top-level XR Origin object.")]
 	[SerializeField]
@@ -1154,15 +1219,20 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 				now - visual.lastSeenTime <=
 				pointVisibilityGraceSeconds;
 
-			if (visual.gameObject.activeSelf != recentlySeen)
+			bool visible = recentlySeen && MarkerPassesHeadsetFilter(
+				pointParent.TransformPoint(visual.targetLocalPosition));
+			if (visual.gameObject.activeSelf != visible)
 			{
-				visual.gameObject.SetActive(recentlySeen);
+				// Inactive markers are also excluded from apartment contact/haptics.
+				visual.gameObject.SetActive(visible);
 			}
 
 			if (!recentlySeen)
 			{
 				continue;
 			}
+			// Keep updating hidden markers so filtering cannot interrupt alignment
+			// drift or prevent them reappearing when they re-enter the box.
 
 			visual.gameObject.transform.localPosition =
 				Vector3.Lerp(

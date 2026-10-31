@@ -19,6 +19,10 @@ public sealed class MotiveRecordingController : MonoBehaviour
     private InputDevice rightController;
     private readonly List<InputDevice> rightDevices = new List<InputDevice>();
     private bool primaryButtonAvailable;
+    private bool secondaryButtonAvailable;
+    private bool previousBPressed;
+    private bool bButtonArmed;
+    private OptiTrackPointReceiver pointReceiver;
     private float nextControllerScan;
     private string lastInputStatus;
     private bool previousPressed;
@@ -36,6 +40,10 @@ public sealed class MotiveRecordingController : MonoBehaviour
     private Transform viewCamera;
     private TextMesh label;
     private string lastLabel;
+    private long filterSequence;
+    private long lastFilterAcknowledged;
+    private float nextFilterSend;
+    private float lastFilterReply = float.NegativeInfinity;
 
     public bool IsRecording => recording && Time.unscaledTime - lastReply < 2f;
 
@@ -61,6 +69,12 @@ public sealed class MotiveRecordingController : MonoBehaviour
     private void OnEnable()
     {
         lastReply = float.NegativeInfinity;
+        lastFilterReply = float.NegativeInfinity;
+        nextFilterSend = 0f;
+        pointReceiver = GetComponent<OptiTrackPointReceiver>();
+        previousBPressed = false;
+        bButtonArmed = false;
+        secondaryButtonAvailable = false;
         previousPressed = false;
         buttonArmed = false; // A held across a reload/reconnect must not toggle recording.
         rightController = default;
@@ -89,8 +103,14 @@ public sealed class MotiveRecordingController : MonoBehaviour
                 ToggleRecording();
             }
             previousPressed = pressed;
+            bool bAvailable = rightController.TryGetFeatureValue(CommonUsages.secondaryButton, out bool bPressed);
+            UpdateMarkerFilterButton(bAvailable, bPressed);
         }
-        else { previousPressed = false; buttonArmed = false; }
+        else
+        {
+            previousPressed = false; buttonArmed = false;
+            UpdateMarkerFilterButton(false, false);
+        }
 
         if (pendingOperation != null && Time.unscaledTime - commandStarted > 5f)
         {
@@ -104,6 +124,40 @@ public sealed class MotiveRecordingController : MonoBehaviour
             nextSend = Time.unscaledTime + (pendingOperation != null ? 0.25f : 0.5f);
         }
         UpdateLabel();
+    }
+
+    private void UpdateMarkerFilterButton(bool available, bool pressed)
+    {
+        secondaryButtonAvailable = available;
+        if (!available) { previousBPressed = false; bButtonArmed = false; return; }
+        if (!pressed) bButtonArmed = true;
+        if (pressed && !previousBPressed && bButtonArmed && pointReceiver != null)
+        {
+            pointReceiver.ToggleMarkerFilter();
+            nextFilterSend = 0f;
+            if (rightController.isValid && rightController.TryGetHapticCapabilities(out var capabilities) && capabilities.supportsImpulse)
+                rightController.SendHapticImpulse(0, 0.25f, 0.1f);
+        }
+        previousBPressed = pressed;
+    }
+
+    private void LateUpdate()
+    {
+        if (socket == null || pointReceiver == null || Time.unscaledTime < nextFilterSend) return;
+        nextFilterSend = Time.unscaledTime + 0.05f;
+        bool valid = pointReceiver.TryGetMarkerFilterTransform(out Matrix4x4 matrix);
+        var message = new StringBuilder($"MTCFILTER1 {clientId} {++filterSequence} " +
+            $"{(pointReceiver.IsMarkerFilterEnabled ? 1 : 0)} {(valid ? 1 : 0)}");
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 4; ++c)
+                message.Append(' ').Append((valid ? matrix[r, c] : Matrix4x4.identity[r, c]).ToString("R", CultureInfo.InvariantCulture));
+        try
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(message.ToString());
+            socket.Send(bytes, bytes.Length);
+        }
+        catch (SocketException) { }
+        catch (ObjectDisposedException) { }
     }
 
     private bool TryReadAButton(out bool pressed)
@@ -129,6 +183,8 @@ public sealed class MotiveRecordingController : MonoBehaviour
             rightController = candidate;
             buttonArmed = false;
             previousPressed = false;
+            bButtonArmed = false;
+            previousBPressed = false;
             primaryButtonAvailable = true;
             pressed = value;
             ReportInputStatus($"A button available on {candidate.name}");
@@ -190,6 +246,13 @@ public sealed class MotiveRecordingController : MonoBehaviour
                 IPEndPoint remote = null;
                 string reply = Encoding.UTF8.GetString(socket.Receive(ref remote));
                 string[] fields = reply.Split(new[] { ' ' }, 7);
+                if (fields.Length == 3 && fields[0] == "MTCFILTER1" && fields[1] == clientId &&
+                    long.TryParse(fields[2], out long filterId) && filterId > lastFilterAcknowledged && filterId <= filterSequence)
+                {
+                    lastFilterAcknowledged = filterId;
+                    lastFilterReply = Time.unscaledTime;
+                    continue;
+                }
                 if (fields.Length != 7 || fields[0] != "MTCREC1" || fields[1] != clientId ||
                     !long.TryParse(fields[2], out long id) || id != sequence ||
                     (fields[3] != "ON" && fields[3] != "OFF" && fields[3] != "ERROR") ||
@@ -222,6 +285,11 @@ public sealed class MotiveRecordingController : MonoBehaviour
             recorderError ? "Mocap: recording ERROR\nCheck saved take" :
             recording ? $"REC  {frames} frames\n" + (primaryButtonAvailable ? "A: stop" : "A unavailable") :
             !primaryButtonAvailable ? "Mocap: A unavailable\nRestart Unity Play" : "Mocap: ready\nA: record";
+        if (pointReceiver != null)
+            status += "\n" + (secondaryButtonAvailable ?
+                $"B: filter {(pointReceiver.IsMarkerFilterEnabled ? "ON" : "OFF")}" : "B unavailable");
+        if (pointReceiver != null && pointReceiver.IsMarkerFilterEnabled && connected && Time.unscaledTime - lastFilterReply >= 1f)
+            status += "\nFilter recording not synced";
         if (status == lastLabel) return;
         lastLabel = status;
         label.text = status;

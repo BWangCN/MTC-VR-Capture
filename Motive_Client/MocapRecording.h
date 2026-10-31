@@ -1,6 +1,6 @@
 #pragma once
 
-// Native, unfiltered NatNet recording. Only owned frame copies cross the callback
+// Native NatNet recording with raw and cropped marker streams. Only owned frame copies cross the callback
 // boundary; JSON serialization, file I/O and control replies belong to the worker.
 #include "NatNetCAPI.h"
 #include <atomic>
@@ -52,6 +52,32 @@ namespace mocap_recording
         for (int i = 0; i < count; ++i) { if (i) out << ','; write(i); }
         out << ']';
     }
+    template<class Predicate, class Function> void filteredArray(std::ostream& out, int count, Predicate keep, Function write)
+    {
+        out << '['; bool first = true;
+        for (int i = 0; i < count; ++i)
+            if (keep(i)) { if (!first) out << ','; first = false; write(i); }
+        out << ']';
+    }
+    struct BodyFilter
+    {
+        bool enabled = false;
+        bool valid = false;
+        // Row-major affine transform: native Motive xyz -> world-up metres
+        // relative to the tracked headset. Unity supplies its current alignment.
+        double transform[12] = {1,0,0,0, 0,1,0,0, 0,0,1,0};
+        bool keep(float x, float y, float z) const
+        {
+            if (!enabled) return true;
+            if (!valid || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return false;
+            double delta[3];
+            for (int r = 0; r < 3; ++r)
+                delta[r] = transform[r*4]*x + transform[r*4+1]*y + transform[r*4+2]*z + transform[r*4+3];
+            constexpr double epsilon = 0.00001; // tolerate float/matrix serialization roundoff at a boundary
+            return std::abs(delta[0]) <= 0.3 + epsilon && std::abs(delta[2]) <= 0.3 + epsilon &&
+                delta[1] >= -2 - epsilon && delta[1] <= 0.5 + epsilon;
+        }
+    };
     inline void position(std::ostream& out, float x, float y, float z)
     {
         out << '['; number(out, x); out << ','; number(out, y); out << ','; number(out, z); out << ']';
@@ -90,11 +116,13 @@ namespace mocap_recording
         std::int64_t receiveUnixNs = 0;
         std::int64_t receiveSteadyNs = 0;
         int picoID = -1;
+        BodyFilter filter;
         ~Frame() { NatNet_FreeFrame(data.get()); }
     };
-    inline void writeFrame(std::ostream& out, const Frame& owned)
+    inline void writeFrame(std::ostream& out, const Frame& owned, const BodyFilter* filter = nullptr)
     {
         const auto& f = *owned.data;
+        auto keep = [&](float x, float y, float z) { return !filter || filter->keep(x, y, z); };
         out << std::setprecision(17) << "{\"frame\":" << f.iFrame
             << ",\"receive_unix_ns\":" << owned.receiveUnixNs
             << ",\"receive_steady_ns\":" << owned.receiveSteadyNs
@@ -110,13 +138,22 @@ namespace mocap_recording
         array(out, f.nMarkerSets, [&](int i) {
             const auto& m = f.MocapData[i]; out << "{\"name\":"; text(out, m.szName);
             out << ",\"positions\":";
-            array(out, m.nMarkers, [&](int j) { position(out, m.Markers[j][0], m.Markers[j][1], m.Markers[j][2]); });
+            array(out, m.nMarkers, [&](int j) {
+                // Preserve marker-set indices/names; rejected slots become null.
+                if (keep(m.Markers[j][0], m.Markers[j][1], m.Markers[j][2]))
+                    position(out, m.Markers[j][0], m.Markers[j][1], m.Markers[j][2]);
+                else out << "null";
+            });
             out << '}';
         });
         out << ",\"other_markers\":";
-        array(out, f.nOtherMarkers, [&](int i) { position(out, f.OtherMarkers[i][0], f.OtherMarkers[i][1], f.OtherMarkers[i][2]); });
+        filteredArray(out, f.nOtherMarkers,
+            [&](int i) { return keep(f.OtherMarkers[i][0], f.OtherMarkers[i][1], f.OtherMarkers[i][2]); },
+            [&](int i) { position(out, f.OtherMarkers[i][0], f.OtherMarkers[i][1], f.OtherMarkers[i][2]); });
         out << ",\"labeled_markers\":";
-        array(out, f.nLabeledMarkers, [&](int i) { marker(out, f.LabeledMarkers[i]); });
+        filteredArray(out, f.nLabeledMarkers,
+            [&](int i) { const auto& m = f.LabeledMarkers[i]; return keep(m.x, m.y, m.z); },
+            [&](int i) { marker(out, f.LabeledMarkers[i]); });
         out << ",\"rigid_bodies\":";
         array(out, f.nRigidBodies, [&](int i) { rigidBody(out, f.RigidBodies[i]); });
         out << ",\"skeletons\":";
@@ -129,7 +166,9 @@ namespace mocap_recording
             const auto& a = f.Assets[i]; out << "{\"id\":" << a.assetID << ",\"rigid_bodies\":";
             array(out, a.nRigidBodies, [&](int j) { rigidBody(out, a.RigidBodyData[j]); });
             out << ",\"markers\":";
-            array(out, a.nMarkers, [&](int j) { marker(out, a.MarkerData[j]); }); out << '}';
+            filteredArray(out, a.nMarkers,
+                [&](int j) { const auto& m = a.MarkerData[j]; return keep(m.x, m.y, m.z); },
+                [&](int j) { marker(out, a.MarkerData[j]); }); out << '}';
         });
         out << ",\"force_plates\":";
         array(out, f.nForcePlates, [&](int i) { analog(out, f.ForcePlates[i]); });
@@ -145,6 +184,13 @@ namespace mocap_recording
             const auto& p = f.GPIO[i]; out << "{\"id\":" << p.ID << ",\"values\":";
             array(out, p.numberOfGPIOPorts, [&](int j) { out << p.GPIO[j]; }); out << '}';
         });
+        if (filter)
+        {
+            out << ",\"body_filter\":{\"enabled\":" << (filter->enabled ? "true" : "false")
+                << ",\"valid\":" << (filter->valid ? "true" : "false")
+                << ",\"bounds_min_m\":[-0.3,-2,-0.3],\"bounds_max_m\":[0.3,0.5,0.3],\"motive_to_headset_delta\":";
+            array(out, 12, [&](int i) { number(out, filter->transform[i]); }); out << '}';
+        }
         out << "}\n";
     }
     inline void writePico(std::ostream& out, const Frame& owned)
@@ -280,6 +326,9 @@ namespace mocap_recording
                 owned->picoID = picoID; owned->receiveUnixNs = receiveUnixNs; owned->receiveSteadyNs = receiveSteadyNs;
                 std::lock_guard<std::mutex> lock(mutex_);
                 if (!accepting_ || generation != generation_) return;
+                owned->filter = filter_;
+                owned->filter.valid = filter_.valid && filterUpdated_ != std::chrono::steady_clock::time_point{} &&
+                    std::chrono::steady_clock::now() - filterUpdated_ <= std::chrono::milliseconds(500);
                 if (queue_.size() >= queueLimit_) { accepting_ = false; ++dropped_; error_ = "Recording queue overflow; take incomplete"; }
                 else queue_.push_back(std::move(owned));
                 condition_.notify_one();
@@ -309,9 +358,12 @@ namespace mocap_recording
         fs::path root_, session_;
         std::string metadata_;
         std::function<std::string()> metadataProvider_;
-        std::ofstream frames_, pico_;
+        std::ofstream frames_, pico_, filtered_;
+        BodyFilter filter_;
+        std::chrono::steady_clock::time_point filterUpdated_{};
         bool opened_ = false;
         std::uint64_t written_ = 0, missing_ = 0, discontinuities_ = 0;
+        std::uint64_t invalidFilterFrames_ = 0;
         int previousFrame_ = -1;
         std::int64_t started_ = 0;
         std::map<std::string, std::uint64_t> lastCommand_;
@@ -327,6 +379,7 @@ namespace mocap_recording
             finish();
             { std::lock_guard<std::mutex> lock(mutex_); error_.clear(); dropped_ = 0; }
             written_ = missing_ = discontinuities_ = 0; previousFrame_ = -1;
+            invalidFilterFrames_ = 0;
             try
             {
                 if (metadataProvider_) metadata_ = metadataProvider_();
@@ -335,28 +388,31 @@ namespace mocap_recording
                 if (!fs::create_directories(session_)) throw std::runtime_error("Take directory already exists");
                 std::ofstream metadata(session_ / "metadata.json");
                 metadata << "{\"schema\":\"mtc_natnet_recording_v1\",\"started_unix_ns\":" << started_
-                         << ",\"position_units\":\"m\",\"coordinates\":\"native Motive stream; no Unity alignment or filtering\","
+                         << ",\"position_units\":\"m\",\"coordinates\":\"native Motive positions; raw file unfiltered; cropped file retains native coordinates\","
+                         << "\"filtered_file\":\"filtered_frames.jsonl\",\"filter_bounds_min_m\":[-0.3,-2,-0.3],\"filter_bounds_max_m\":[0.3,0.5,0.3],"
                          << "\"quaternion_order\":\"xyzw\",\"source\":" << metadata_ << "}\n";
                 metadata.close();
                 if (!metadata) throw std::runtime_error("Unable to write metadata");
-                frames_.clear(); pico_.clear();
+                frames_.clear(); pico_.clear(); filtered_.clear();
                 frames_.open(session_ / "frames.jsonl"); pico_.open(session_ / "pico.csv");
-                frames_.imbue(std::locale::classic()); pico_.imbue(std::locale::classic());
-                if (!frames_ || !pico_) throw std::runtime_error("Unable to open recording files");
+                filtered_.open(session_ / "filtered_frames.jsonl");
+                frames_.imbue(std::locale::classic()); pico_.imbue(std::locale::classic()); filtered_.imbue(std::locale::classic());
+                if (!frames_ || !pico_ || !filtered_) throw std::runtime_error("Unable to open recording files");
                 pico_ << "frame,receive_unix_ns,motive_timestamp,pico_id,available,tracked,good_quality,mean_error_m,x_m,y_m,z_m,qx,qy,qz,qw,params\n";
                 opened_ = true;
                 std::lock_guard<std::mutex> lock(mutex_); ++generation_; accepting_ = true;
             }
             catch (const std::exception& e)
             {
-                frames_.close(); pico_.close();
+                frames_.close(); pico_.close(); filtered_.close();
                 std::lock_guard<std::mutex> lock(mutex_); error_ = e.what(); accepting_ = false;
             }
         }
         void write(const Frame& f)
         {
-            writeFrame(frames_, f); writePico(pico_, f);
-            if (!frames_ || !pico_)
+            writeFrame(frames_, f); writePico(pico_, f); writeFrame(filtered_, f, &f.filter);
+            if (f.filter.enabled && !f.filter.valid) ++invalidFilterFrames_;
+            if (!frames_ || !pico_ || !filtered_)
             {
                 std::lock_guard<std::mutex> lock(mutex_); accepting_ = false;
                 ++dropped_; error_ = "Recording write failed; take incomplete"; return;
@@ -376,12 +432,12 @@ namespace mocap_recording
         {
             { std::lock_guard<std::mutex> lock(mutex_); accepting_ = false; }
             if (!opened_) return;
-            drain(); frames_.close(); pico_.close(); opened_ = false;
+            drain(); frames_.close(); pico_.close(); filtered_.close(); opened_ = false;
             std::string error;
             std::uint64_t dropped;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                if ((!frames_ || !pico_) && error_.empty()) error_ = "Unable to flush recording; take incomplete";
+                if ((!frames_ || !pico_ || !filtered_) && error_.empty()) error_ = "Unable to flush recording; take incomplete";
                 error = error_; dropped = dropped_;
             }
             // No file operations while holding the callback's queue mutex.
@@ -389,6 +445,7 @@ namespace mocap_recording
             summary << "{\"finalized\":true,\"started_unix_ns\":" << started_ << ",\"stopped_unix_ns\":" << unixNanoseconds()
                     << ",\"frames_written\":" << written_ << ",\"recording_drops\":" << dropped
                     << ",\"missing_source_frame_ids\":" << missing_ << ",\"source_discontinuities\":" << discontinuities_
+                    << ",\"invalid_filter_frames\":" << invalidFilterFrames_
                     << ",\"error\":"; text(summary, error); summary << "}\n"; summary.close();
             if (!summary) { std::lock_guard<std::mutex> lock(mutex_); error_ = "Unable to write recording summary; take incomplete"; }
         }
@@ -399,9 +456,32 @@ namespace mocap_recording
                 char buffer[512]; sockaddr_in sender{}; int size = sizeof(sender);
                 int length = recvfrom(socket_, buffer, sizeof(buffer), 0, reinterpret_cast<sockaddr*>(&sender), &size);
                 if (length <= 0) return;
-                std::istringstream in(std::string(buffer, length));
+                std::istringstream in(std::string(buffer, length)); in.imbue(std::locale::classic());
                 std::string protocol, client, operation; std::uint64_t sequence;
-                if (!(in >> protocol >> client >> sequence >> operation) || protocol != "MTCREC1" || client.size() > 64) continue;
+                if (!(in >> protocol >> client >> sequence) || client.size() > 64) continue;
+                if (protocol == "MTCFILTER1")
+                {
+                    BodyFilter updated; int enabled, valid;
+                    if (!(in >> enabled >> valid) || (enabled != 0 && enabled != 1) || (valid != 0 && valid != 1)) continue;
+                    updated.enabled = enabled != 0; updated.valid = valid != 0;
+                    bool parsed = true;
+                    for (double& value : updated.transform)
+                        if (!(in >> value) || !std::isfinite(value)) { parsed = false; break; }
+                    if (!parsed) continue;
+                    const auto key = "filter:" + client;
+                    const auto it = lastCommand_.find(key);
+                    if (it == lastCommand_.end() || sequence > it->second)
+                    {
+                        if (it == lastCommand_.end() && lastCommand_.size() >= 128) continue;
+                        lastCommand_[key] = sequence;
+                        std::lock_guard<std::mutex> lock(mutex_);
+                        filter_ = updated; filterUpdated_ = std::chrono::steady_clock::now();
+                    }
+                    const auto reply = "MTCFILTER1 " + client + ' ' + std::to_string(sequence);
+                    sendto(socket_, reply.data(), static_cast<int>(reply.size()), 0, reinterpret_cast<sockaddr*>(&sender), size);
+                    continue;
+                }
+                if (protocol != "MTCREC1" || !(in >> operation)) continue;
                 if (operation != "START" && operation != "STOP" && operation != "STATUS") continue;
                 // Retries and out-of-order UDP commands must never create a second take.
                 auto it = lastCommand_.find(client);
@@ -433,8 +513,8 @@ namespace mocap_recording
                 if (opened_ && !accepting) finish();
                 if (opened_ && std::chrono::steady_clock::now() - flushTime >= std::chrono::seconds(1))
                 {
-                    frames_.flush(); pico_.flush(); flushTime = std::chrono::steady_clock::now();
-                    if (!frames_ || !pico_)
+                    frames_.flush(); pico_.flush(); filtered_.flush(); flushTime = std::chrono::steady_clock::now();
+                    if (!frames_ || !pico_ || !filtered_)
                     { std::lock_guard<std::mutex> lock(mutex_); accepting_ = false; error_ = "Recording flush failed; take incomplete"; }
                 }
                 std::unique_lock<std::mutex> lock(mutex_);

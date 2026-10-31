@@ -62,6 +62,42 @@ retried with sequence IDs, so lost replies do not create duplicate takes or togg
 the state twice. The older `StartStopRecording.cs` / Python control on port 5010 is
 separate and is not used here. Unity must run on the same PC as the client.
 
+### Right B: headset-following marker box
+
+Press **right-controller B** to toggle the marker crop on/off. It starts off.
+The box follows the tracked headset position and extends **2 m down, 0.5 m up,
+and 0.3 m left/right/forward/backward** (a 0.6 m × 0.6 m × 2.5 m box). It stays aligned
+with world-up; looking down or turning your head does not rotate it. The headset
+label shows `B: filter ON/OFF`; the button works independently of recording.
+
+Markers outside the box disappear from live rendering and apartment contact/
+haptics, but their tracking continues so they return when they enter the box or
+filtering is disabled. Filtering uses the same aligned world positions as the
+live point cloud and does not move the XR rig or change alignment/drift rates.
+The headset reference works even when Motive's Pico tracking-valid flag is false;
+the crop still depends on the existing mocap-to-Unity alignment being accurate.
+
+During recording, `filtered_frames.jsonl` saves a second stream with the same
+frame numbers/timestamps as `frames.jsonl`. Only marker arrays are cropped;
+Pico and other rigid-body/skeleton/device context remain available. Selected
+points retain native Motive coordinates and marker IDs. In marker sets, rejected
+positions become `null` so marker indices still match metadata names. Filtering
+is applied to **all raw markers**, including stationary points, before the
+separate movement filter used by the Unity display. With B off, the second stream
+retains every marker. The raw file and `pico.csv` always remain complete.
+
+Unity sends the current headset-relative transform and B state at 20 Hz. Each
+filtered frame includes `body_filter.enabled`, `valid`, box bounds, and the 3×4
+row-major native-to-headset-relative transform. If updates stop for over 0.5 s or
+the reference is unavailable while filtering is on, that frame's crop is marked
+invalid and contains no selected markers; raw data remains available. The summary
+counts these frames as `invalid_filter_frames`. `Filter recording not synced` in
+the headset means the new native filter protocol has not been acknowledged: install
+the staged native update and restart the sender yourself before relying on the
+cropped recording. The source of the box is the headset's Unity pose, not Motive's
+Pico rigid-body validity flag. This is a spatial crop, not suit-marker identification;
+other reflective objects inside the box will still pass.
+
 The new native executable must be installed before this feature works. We do not
 start, stop or restart the sender. If an update was staged beside the running
 ASSIP executable, stop the sender yourself, then run:
@@ -97,6 +133,9 @@ Each take contains:
   Motive's tracked flag and the existing 10 mm Unity quality decision. Untracked or
   poor-quality poses are saved without filtering. Missing poses have blank pose
   fields, not an invented zero/identity pose.
+- `filtered_frames.jsonl`: frame-synchronized copy with the B-button marker crop
+  and per-frame filter state/transform. Original rigid-body and other non-marker
+  context is preserved. See the headset box details above.
 - `metadata.json`: format/version, coordinate/units information, server version,
   configured frame rate, host clock frequency, and a model-description snapshot
   queried at the start of each take. The exact rigid-body name `Pico` is resolved

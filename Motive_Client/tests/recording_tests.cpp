@@ -103,6 +103,43 @@ int main(int argc, char** argv)
         state(command(control, failure.port(), "MTCREC1 failure 1 START"), "ERROR");
         failure.shutdown();
 
+        mocap_recording::Recorder filtered;
+        require(filtered.initialize(root / "filtered", "{}", 0), "Cannot bind filter fixture");
+        const std::string matrix = " 1 0 0 -10 0 0 1 -3 0 1 0 -20";
+        require(command(control, filtered.port(), "MTCFILTER1 filtertest 1 1 1" + matrix) == "MTCFILTER1 filtertest 1",
+            "Filter configuration not acknowledged");
+        state(command(control, filtered.port(), "MTCREC1 filtertest 1 START"), "ON");
+        auto box = std::make_unique<sFrameOfMocapData>();
+        auto boxMarkers = std::make_unique<MarkerData[]>(7);
+        const float samples[7][3] = {
+            {10,20,3}, {9.7f,19.7f,1}, {10.3f,20.3f,3.5f},
+            {10.301f,20,3}, {10,20,3.51f}, {10,20,0.99f}, {10,20.301f,3}
+        };
+        for (int i = 0; i < 7; ++i) for (int j = 0; j < 3; ++j) boxMarkers[i][j] = samples[i][j];
+        box->nOtherMarkers = 7; box->OtherMarkers = boxMarkers.get();
+        box->nMarkerSets = 1; strcpy_s(box->MocapData[0].szName, "suit");
+        box->MocapData[0].nMarkers = 7; box->MocapData[0].Markers = boxMarkers.get();
+        box->nLabeledMarkers = 2;
+        box->LabeledMarkers[0].ID = 601; box->LabeledMarkers[0].x = 10; box->LabeledMarkers[0].y = 20; box->LabeledMarkers[0].z = 3;
+        box->LabeledMarkers[1].ID = 602; box->LabeledMarkers[1].x = 50;
+        box->nAssets = 1; box->Assets[0].assetID = 31; box->Assets[0].nMarkers = 2; box->Assets[0].MarkerData = box->LabeledMarkers;
+        box->nRigidBodies = 1; box->RigidBodies[0].ID = 42; box->RigidBodies[0].x = 100;
+        box->iFrame = 1; filtered.capture(*box, 42, 0, 0);
+        // A delayed disable packet must not override a newer enable.
+        command(control, filtered.port(), "MTCFILTER1 filtertest 0 0 1" + matrix);
+        box->iFrame = 2; filtered.capture(*box, 42, 0, 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(550));
+        box->iFrame = 3; filtered.capture(*box, 42, 0, 0); // stale transform: explicit invalid, no invented crop
+        command(control, filtered.port(), "MTCFILTER1 filtertest 2 0 1" + matrix);
+        box->iFrame = 4; filtered.capture(*box, 42, 0, 0); // disabled: preserve all
+        command(control, filtered.port(), "MTCFILTER1 filtertest 3 1 0" + matrix);
+        box->iFrame = 5; filtered.capture(*box, 42, 0, 0); // missing headset: explicit invalid
+        // Move the headset centre; selection must move without changing marker data.
+        command(control, filtered.port(), "MTCFILTER1 filtertest 4 1 1 1 0 0 -10.3 0 0 1 -3 0 1 0 -20");
+        box->iFrame = 6; filtered.capture(*box, 42, 0, 0);
+        state(command(control, filtered.port(), "MTCREC1 filtertest 2 STOP"), "OFF");
+        filtered.shutdown();
+
         // Exercise the real receive callback while the recorder writes on its
         // worker: a paced 100 Hz, 1000-marker stream must stay complete.
         require(g_recorder.initialize(root / "paced", "{}", 0), "Cannot bind paced recorder");

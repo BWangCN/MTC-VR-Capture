@@ -122,6 +122,7 @@ public static class OptiTrackAlignmentChecks
             Require(Vector3.Distance(markerObject.transform.position,
                 alignmentRotation * new Vector3(520, 1, 2) + alignmentTranslation) < 0.001f,
                 "Reacquired marker did not appear at its latest measured position.");
+            CheckHeadsetFilter(receiver, camera, markerObject, root.transform);
             Object.DestroyImmediate(markerObject);
             visuals.Clear();
             // Script reloads/disable-enable cycles must release and restore a receiver.
@@ -138,7 +139,8 @@ public static class OptiTrackAlignmentChecks
             string report = "PASS: position updates survive rotation rejection; tracking reacquires; " +
                 "smooth convergence from +/-5 m and +/-1000 m; optional/zero speed limits; " +
                 "tracking quality and XR camera pose preserved; receiver socket/thread restart cycles; " +
-                "instant first/reacquired marker placement with subsequent smoothing preserved.";
+                "instant first/reacquired marker placement with subsequent smoothing preserved; " +
+                "headset filter bounds, transformed parents, headset movement, native transform and B-button edge handling.";
             File.WriteAllText(ReportPath, report);
             Debug.Log("[MocapAlignmentChecks] " + report);
         }
@@ -152,6 +154,73 @@ public static class OptiTrackAlignmentChecks
             Object.DestroyImmediate(root);
             if (File.Exists(RequestPath)) File.Delete(RequestPath);
         }
+    }
+
+    static void CheckHeadsetFilter(OptiTrackPointReceiver receiver, Transform camera, GameObject marker, Transform root)
+    {
+        camera.position = new Vector3(10, 3, 20);
+        camera.rotation = Quaternion.Euler(70, 130, 40);
+        var parent = new GameObject("Scaled Marker Parent").transform;
+        parent.SetParent(root, false);
+        parent.position = new Vector3(-100, 12, 70);
+        parent.rotation = Quaternion.Euler(0, 35, 0);
+        parent.localScale = new Vector3(2, 3, 0.5f);
+        marker.transform.SetParent(parent, true);
+        Set(receiver, "pointParent", parent);
+        Set(receiver, "pointSmoothingRate", 0f);
+        Set(receiver, "filterMarkersAroundHeadset", true);
+        Vector3 translation = (Vector3)Get(receiver, "mocapToUnityTranslation");
+        Quaternion rotation = (Quaternion)Get(receiver, "mocapToUnityRotation");
+        Action<Vector3> observe = delta => {
+            Vector3 raw = Quaternion.Inverse(rotation) * (camera.position + delta - translation);
+            Call(receiver, "DisplayPoints", MarkerFrame(raw));
+            Call(receiver, "SmoothAndCullPointVisuals");
+        };
+        foreach (Vector3 delta in new[] { Vector3.zero, new Vector3(-0.3f,-2,-0.3f), new Vector3(0.3f,0.5f,0.3f), new Vector3(0.2f,-1,0.2f) })
+        {
+            observe(delta);
+            Require(marker.activeSelf, "Filter removed an inside/boundary marker or used camera tilt/local parent scale.");
+        }
+        foreach (Vector3 delta in new[] { new Vector3(0.301f,0,0), new Vector3(-0.301f,0,0), new Vector3(0,0,0.301f),
+            new Vector3(0,0,-0.301f), new Vector3(0,0.501f,0), new Vector3(0,-2.001f,0) })
+        {
+            observe(delta);
+            Require(!marker.activeSelf, "Filter admitted an outside marker.");
+        }
+        observe(new Vector3(0.2f, -1, 0));
+        camera.position += Vector3.right * 3;
+        Call(receiver, "SmoothAndCullPointVisuals");
+        Require(!marker.activeSelf, "Filter failed to follow headset movement without a new mocap packet.");
+        camera.position -= Vector3.right * 3;
+        Call(receiver, "SmoothAndCullPointVisuals");
+        Require(marker.activeSelf, "A hidden marker did not return when the headset box moved back.");
+        observe(Vector3.right * 5);
+        receiver.ToggleMarkerFilter();
+        Require(marker.activeSelf, "Turning filtering off did not restore the marker.");
+
+        Set(receiver, "convertFromMotiveZUp", true);
+        Set(receiver, "positionScale", 0.5f);
+        Set(receiver, "positionOffset", new Vector3(2,3,4));
+        Require(receiver.TryGetMarkerFilterTransform(out Matrix4x4 matrix), "Native crop transform unavailable.");
+        Require(Vector3.Distance(matrix.MultiplyPoint3x4(new Vector3(6,8,10)), new Vector3(1,5,-13)) < 0.001f,
+            "Native filter transform disagrees with Z-up conversion, scale, offset and yaw alignment.");
+        Set(receiver, "convertFromMotiveZUp", false);
+        Set(receiver, "positionScale", 1f);
+        Set(receiver, "positionOffset", Vector3.zero);
+
+        var controller = root.gameObject.AddComponent<MotiveRecordingController>(); // inactive: no UDP or hardware
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        typeof(MotiveRecordingController).GetField("pointReceiver", flags).SetValue(controller, receiver);
+        var input = typeof(MotiveRecordingController).GetMethod("UpdateMarkerFilterButton", flags);
+        Action<bool,bool> button = (available, pressed) => input.Invoke(controller, new object[] { available, pressed });
+        button(true,true);
+        Require(!receiver.IsMarkerFilterEnabled, "A B button held on startup toggled filtering.");
+        button(true,false); button(true,true); button(true,true);
+        Require(receiver.IsMarkerFilterEnabled, "A B press did not toggle exactly once without a recorder connection.");
+        button(false,false); button(true,true);
+        Require(receiver.IsMarkerFilterEnabled, "A B button held on reconnect toggled filtering.");
+        button(true,false); button(true,true);
+        Require(!receiver.IsMarkerFilterEnabled, "A second B press did not disable filtering.");
     }
 
     static object Frame(Vector3 position, bool rotated)
