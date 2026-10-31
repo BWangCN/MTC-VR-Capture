@@ -290,6 +290,8 @@ public sealed class MotiveRecordingController : MonoBehaviour
                 $"B: filter {(pointReceiver.IsMarkerFilterEnabled ? "ON" : "OFF")}" : "B unavailable");
         if (pointReceiver != null && pointReceiver.IsMarkerFilterEnabled && connected && Time.unscaledTime - lastFilterReply >= 1f)
             status += "\nFilter recording not synced";
+        if (pointReceiver != null && !string.IsNullOrEmpty(pointReceiver.HeightScalingStatus))
+            status += "\n" + pointReceiver.HeightScalingStatus;
         if (status == lastLabel) return;
         lastLabel = status;
         label.text = status;

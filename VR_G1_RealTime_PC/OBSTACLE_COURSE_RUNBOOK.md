@@ -38,11 +38,35 @@ The apartment scene and its assets are preserved.
   `(x, y, z) = (-scene_y, scene_z - 0.0769, scene_x)`.
 - Scale is 1 with no extra rotation: the GLBs already use metres and Y up;
   glTFast applies the handedness conversion. `RealEnvEmbodiment` starts disabled
-  to preserve metric scale; enable it for the existing G1 height calibration.
+  to preserve metric environment scale. Keep it disabled when using the automatic
+  player resize described below.
 
 This provides a VR scene for viewing and contact feedback. The mug and clutter
 stay stationary; grabbing, task scoring, route/gate completion, and the 180-second
 timer are metadata only and are not implemented by this importer.
+
+## Automatic 1.3 m headset height
+
+The mocap receiver adds `PlayerHeightScaler` to XR Origin at runtime. Stand upright
+for the initial **10 seconds**; the headset HUD shows the countdown. With valid
+headset tracking and a plausible floor-relative height, the rig is resized once so
+the headset is **1.3 m above the XR Origin floor plane**. This is eye/headset height,
+with no extra top-of-head offset. If tracking is unavailable, resizing waits for it.
+
+One uniform factor (`1.3 / measured headset height`) applies to all three axes of
+the rig and the displayed mocap body, including controllers, marker spacing and
+body visuals. The floor point beneath the headset stays fixed, and the environment
+retains its metric scale. After calibration, walking and crouching remain natural;
+the camera is not continually forced to a fixed height. Script reloads do not apply
+the factor again. Start a new Play session to calibrate again.
+
+Mocap alignment still works in the original tracking coordinates, then the uniform
+presentation transform is applied. This keeps later Pico updates from undoing the
+resize. Raw NatNet/Pico recordings retain their original physical coordinates.
+The existing native crop protocol receives the resized headset-relative transform,
+so `filtered_frames.jsonl` agrees with the displayed crop. No native-client update
+or restart is needed for this height feature. The automatic scale requires an
+upright, uniformly scaled XR Origin and a headset beneath that rig.
 
 ## Mocap marker alignment
 

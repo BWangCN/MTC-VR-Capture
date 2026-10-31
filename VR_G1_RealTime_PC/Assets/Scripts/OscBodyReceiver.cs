@@ -58,6 +58,7 @@ public class OscBodyReceiver : MonoBehaviour
     Material _mat;
     float _logAt;
     string _onScreen = "(waiting for OSC on 9000…)";
+    PlayerHeightScaler _heightScaler;
 
     void Start()
     {
@@ -138,6 +139,8 @@ public class OscBodyReceiver : MonoBehaviour
 
     void Update()
     {
+        if (hmd == null && Camera.main != null) hmd = Camera.main.transform;
+        if (_heightScaler == null && hmd != null) _heightScaler = hmd.GetComponentInParent<PlayerHeightScaler>();
         Dictionary<string, float[]> snap;
         lock (_lock) { snap = new Dictionary<string, float[]>(_latest); }
         addressCount = snap.Count;
@@ -149,6 +152,9 @@ public class OscBodyReceiver : MonoBehaviour
             {
                 Vector3 p = new Vector3(kv.Value[0], kv.Value[1], kv.Value[2]);
                 if (alignTo != null) p = alignTo.TransformPoint(p);
+                if (_heightScaler != null && (alignTo == null ||
+                    (alignTo != _heightScaler.transform && !alignTo.IsChildOf(_heightScaler.transform))))
+                    p = _heightScaler.ToDisplayWorld(p);
                 GetMarker(kv.Key).position = p;
             }
         }
@@ -171,9 +177,12 @@ public class OscBodyReceiver : MonoBehaviour
         foreach (Transform marker in _markers.Values)
         {
             if (marker == null) continue;
+            float bodyScale = _heightScaler != null ? _heightScaler.ScaleFactor : 1f;
+            float visualScale = _heightScaler != null && (transform == _heightScaler.transform || transform.IsChildOf(_heightScaler.transform)) ? 1f : bodyScale;
+            marker.localScale = Vector3.one * (markerRadius * 2f * visualScale);
             bool tooCloseToCamera = hmd != null &&
                 (marker.position - hmd.position).sqrMagnitude <=
-                minimumCameraDistanceMeters * minimumCameraDistanceMeters;
+                minimumCameraDistanceMeters * minimumCameraDistanceMeters * bodyScale * bodyScale;
             marker.gameObject.SetActive(!tooCloseToCamera);
         }
     }

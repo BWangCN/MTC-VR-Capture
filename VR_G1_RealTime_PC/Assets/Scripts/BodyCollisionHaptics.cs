@@ -69,6 +69,8 @@ public class BodyCollisionHaptics : MonoBehaviour
     float _lastHaptic;
     readonly List<InputDevice> _ctrls = new List<InputDevice>();
     string _status = "";
+    PlayerHeightScaler _heightScaler;
+    float _bodyScale = 1f;
 
     void Start()
     {
@@ -110,6 +112,8 @@ public class BodyCollisionHaptics : MonoBehaviour
     // ---------- classify the 8 trackers + head + hands into body roles ----------
     void BuildCapsules()
     {
+        if (_heightScaler == null && head != null) _heightScaler = head.GetComponentInParent<PlayerHeightScaler>();
+        _bodyScale = _heightScaler != null ? _heightScaler.ScaleFactor : 1f;
         _caps.Clear();
 
         var pts = oscReceiver.GetBodyTrackerWorldPositions();
@@ -138,8 +142,8 @@ public class BodyCollisionHaptics : MonoBehaviour
         Vector3? lHand = ControllerWorld(InputDeviceCharacteristics.Left);
         Vector3? rHand = ControllerWorld(InputDeviceCharacteristics.Right);
 
-        Vector3? lSh = chest.HasValue ? chest.Value - right * 0.17f + Vector3.up * 0.02f : (Vector3?)null;
-        Vector3? rSh = chest.HasValue ? chest.Value + right * 0.17f + Vector3.up * 0.02f : (Vector3?)null;
+        Vector3? lSh = chest.HasValue ? chest.Value - right * (0.17f * _bodyScale) + Vector3.up * (0.02f * _bodyScale) : (Vector3?)null;
+        Vector3? rSh = chest.HasValue ? chest.Value + right * (0.17f * _bodyScale) + Vector3.up * (0.02f * _bodyScale) : (Vector3?)null;
 
         Add("torso", hip, chest, torsoRadius);
         Add("neck_head", chest, headP, neckHeadRadius);
@@ -151,7 +155,7 @@ public class BodyCollisionHaptics : MonoBehaviour
         Add("R_uarm", rSh, rElbow, upperArmRadius);
         Add("L_farm", lElbow, lHand, forearmRadius);
         Add("R_farm", rElbow, rHand, forearmRadius);
-        Add("head", headP + Vector3.up * 0.02f, headP + Vector3.up * 0.16f, neckHeadRadius);
+        Add("head", headP + Vector3.up * (0.02f * _bodyScale), headP + Vector3.up * (0.16f * _bodyScale), neckHeadRadius);
     }
 
     void AssignLR(Vector3 a, Vector3 b, System.Func<Vector3, float> lat, ref Vector3? left, ref Vector3? rightSide)
@@ -164,7 +168,7 @@ public class BodyCollisionHaptics : MonoBehaviour
 
     void Add(string name, Vector3? a, Vector3? b, float r)
     {
-        if (a.HasValue && b.HasValue) _caps.Add(new Cap { name = name, a = a.Value, b = b.Value, r = r });
+        if (a.HasValue && b.HasValue) _caps.Add(new Cap { name = name, a = a.Value, b = b.Value, r = r * _bodyScale });
     }
 
     Vector3? ControllerWorld(InputDeviceCharacteristics side)

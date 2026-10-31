@@ -125,6 +125,8 @@ public static class OptiTrackAlignmentChecks
             CheckHeadsetFilter(receiver, camera, markerObject, root.transform);
             Object.DestroyImmediate(markerObject);
             visuals.Clear();
+            CheckPlayerHeightScaling(root.transform, false);
+            CheckPlayerHeightScaling(root.transform, true);
             // Script reloads/disable-enable cycles must release and restore a receiver.
             // Use an ephemeral local port, never the running capture session's port 5005.
             Set(receiver, "listenPort", 0);
@@ -140,7 +142,8 @@ public static class OptiTrackAlignmentChecks
                 "smooth convergence from +/-5 m and +/-1000 m; optional/zero speed limits; " +
                 "tracking quality and XR camera pose preserved; receiver socket/thread restart cycles; " +
                 "instant first/reacquired marker placement with subsequent smoothing preserved; " +
-                "headset filter bounds, transformed parents, headset movement, native transform and B-button edge handling.";
+                "headset filter bounds, transformed parents, headset movement, native transform and B-button edge handling; " +
+                "delayed 1.3 m uniform player scaling, body/controller proportions, floor pivot, alignment stability and scale idempotence.";
             File.WriteAllText(ReportPath, report);
             Debug.Log("[MocapAlignmentChecks] " + report);
         }
@@ -154,6 +157,99 @@ public static class OptiTrackAlignmentChecks
             Object.DestroyImmediate(root);
             if (File.Exists(RequestPath)) File.Delete(RequestPath);
         }
+    }
+
+    static void CheckPlayerHeightScaling(Transform root, bool pointsUnderRig)
+    {
+        var origin = new GameObject("Height Test Origin").transform;
+        origin.SetParent(root, false);
+        origin.position = new Vector3(12,4,-8);
+        origin.rotation = Quaternion.Euler(0,37,0);
+        var camera = new GameObject("Height Test HMD").transform;
+        camera.SetParent(origin, false); camera.localPosition = new Vector3(0.6f,1.8f,-0.4f);
+        var hand = new GameObject("Height Test Controller").transform;
+        hand.SetParent(origin, false); hand.localPosition = new Vector3(-0.3f,1.1f,0.4f);
+        var environment = new GameObject("Unscaled Test Environment").transform;
+        environment.SetParent(root, false); environment.position = new Vector3(4,8,-3);
+        Matrix4x4 environmentBefore = environment.localToWorldMatrix;
+        var receiverObject = new GameObject("Height Test Receiver");
+        receiverObject.transform.SetParent(root, false);
+        var receiver = receiverObject.AddComponent<OptiTrackPointReceiver>();
+        var prefab = new GameObject("Height Test Marker"); prefab.transform.SetParent(root, false);
+        var parent = pointsUnderRig ? origin : receiverObject.transform;
+        Set(receiver, "xrOrigin", origin); Set(receiver, "vrCamera", camera);
+        Set(receiver, "pointParent", parent); Set(receiver, "pointPrefab", prefab);
+        Set(receiver, "convertFromMotiveZUp", false);
+        Set(receiver, "motiveLocalForwardAxis", Vector3.forward); Set(receiver, "motiveLocalUpAxis", Vector3.up);
+        Set(receiver, "hasPointAlignment", true);
+        Set(receiver, "acceptedMotiveCameraPosition", camera.position);
+        Set(receiver, "acceptedMotiveCameraRotation", camera.rotation);
+        var originalHead = camera.position; var originalHeadLocal = camera.localPosition;
+        var originalHand = hand.position;
+        Vector3 rawMarker = originalHead + new Vector3(0.2f,-1,0.1f);
+        Call(receiver, "DisplayPoints", MarkerFrame(rawMarker));
+        var visuals = (System.Collections.IDictionary)Get(receiver, "pointVisuals");
+        var visual = visuals[7];
+        var marker = (GameObject)visual.GetType().GetField("gameObject").GetValue(visual);
+        float originalMarkerDiameter = marker.transform.lossyScale.x;
+
+        var scaler = origin.gameObject.AddComponent<PlayerHeightScaler>();
+        scaler.Initialize(origin, camera, receiver);
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var apply = typeof(PlayerHeightScaler).GetMethod("TryApplyMeasuredHeight", flags);
+        typeof(PlayerHeightScaler).GetField("startedAt", flags).SetValue(scaler, Time.unscaledTime - 9.99f);
+        typeof(PlayerHeightScaler).GetMethod("LateUpdate", flags).Invoke(scaler, null);
+        Require(!scaler.HasApplied && origin.localScale == Vector3.one, "Player resized before the 10-second countdown.");
+        Require(!(bool)apply.Invoke(scaler, new object[] { 0f }), "Invalid floor/headset height was accepted.");
+
+        var source = receiverObject.AddComponent<BodyDataReceiver>(); // inactive fixtures: no sockets
+        source.receivedJoints[15] = new Vector3(0,1.8f,0);
+        source.receivedJoints[0] = new Vector3(0.1f,0.8f,0.05f);
+        source.receivedJoints[7] = new Vector3(0.1f,0,0.05f);
+        source.receivedRotations[15] = Quaternion.identity;
+        var body = receiverObject.AddComponent<BodySkeletonRenderer>(); body.receiver = source; body.hmd = camera;
+        typeof(BodySkeletonRenderer).GetField("_heightScaler", flags).SetValue(body, scaler);
+        var computeBody = typeof(BodySkeletonRenderer).GetMethod("ComputeWorldJoints", flags);
+        computeBody.Invoke(body, null);
+        Vector3 previousPelvis = body.WorldJoints[0];
+        float previousBodyLength = Vector3.Distance(body.WorldJoints[15], body.WorldJoints[7]);
+
+        Require((bool)apply.Invoke(scaler, new object[] { 1.8f }), "Standing-height resize failed.");
+        float factor = 1.3f / 1.8f;
+        Require(Mathf.Abs(camera.position.y - origin.position.y - 1.3f) < 0.0001f,
+            "Headset height did not become exactly 1.3 m above the floor.");
+        Require(Mathf.Abs(camera.position.x - originalHead.x) < 0.0001f && Mathf.Abs(camera.position.z - originalHead.z) < 0.0001f,
+            "Resizing moved the wearer sideways instead of keeping the floor pivot under their head.");
+        Require(camera.localPosition == originalHeadLocal && Mathf.Abs(origin.position.y - 4f) < 0.0001f,
+            "Resize overwrote tracked camera local pose or shifted the floor.");
+        Require(Vector3.Distance(origin.localScale, Vector3.one * factor) < 0.0001f,
+            "Rig scale is not uniform across all axes.");
+        Require(Vector3.Distance(hand.position - camera.position, (originalHand - originalHead) * factor) < 0.0001f,
+            "Controller/body proportions changed.");
+        Require(Vector3.Distance(marker.transform.position, scaler.ToDisplayWorld(rawMarker)) < 0.0001f &&
+            Mathf.Abs(marker.transform.lossyScale.x - originalMarkerDiameter * factor) < 0.0001f,
+            "Existing marker position/diameter was not scaled once (parented or unparented). ");
+        computeBody.Invoke(body, null);
+        Require(Vector3.Distance(body.WorldJoints[0], scaler.ToDisplayWorld(previousPelvis)) < 0.0001f &&
+            Mathf.Abs(Vector3.Distance(body.WorldJoints[15], body.WorldJoints[7]) - previousBodyLength * factor) < 0.0001f,
+            "Tracked body bone proportions did not follow the same uniform scale.");
+        for (int i = 0; i < 100; i++) Call(receiver, "UpdatePointAlignment", 0.02f);
+        Require(((Vector3)Get(receiver, "mocapToUnityTranslation")).magnitude < 0.0001f,
+            "Motive alignment tried to undo the player resize.");
+        Call(receiver, "DisplayPoints", MarkerFrame(rawMarker));
+        Require(Vector3.Distance(marker.transform.position, scaler.ToDisplayWorld(rawMarker)) < 0.0001f,
+            "New mocap updates reverted or compounded the body scale.");
+        Require(receiver.TryGetMarkerFilterTransform(out Matrix4x4 filter) &&
+            Vector3.Distance(filter.MultiplyPoint3x4(rawMarker), scaler.ToDisplayWorld(rawMarker) - camera.position) < 0.0001f,
+            "Filtered recordings disagree with the resized live body.");
+        Require(environment.localToWorldMatrix == environmentBefore, "Player resizing changed the environment.");
+        Require(!(bool)apply.Invoke(scaler, new object[] { 1.3f }) && Mathf.Abs(scaler.ScaleFactor - factor) < 0.0001f,
+            "Calibration compounded a second time.");
+        camera.localPosition -= Vector3.up * 0.2f;
+        typeof(PlayerHeightScaler).GetMethod("LateUpdate", flags).Invoke(scaler, null);
+        Require(Mathf.Abs(camera.position.y - origin.position.y - (1.3f - 0.2f*factor)) < 0.0001f,
+            "Post-calibration crouching was forced back to 1.3 m.");
+        Object.DestroyImmediate(marker); visuals.Clear();
     }
 
     static void CheckHeadsetFilter(OptiTrackPointReceiver receiver, Transform camera, GameObject marker, Transform root)

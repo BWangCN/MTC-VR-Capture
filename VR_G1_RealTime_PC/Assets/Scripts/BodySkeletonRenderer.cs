@@ -55,6 +55,7 @@ public class BodySkeletonRenderer : MonoBehaviour
     LineRenderer[] _bones;
     Material _mat;
     float _warnAt = -1f;
+    PlayerHeightScaler _heightScaler;
 
     void Start()
     {
@@ -115,16 +116,20 @@ public class BodySkeletonRenderer : MonoBehaviour
         if (!hasData) { hasData = true; SetVisible(true); Debug.Log("[BodySkeleton] Body data flowing — rendering 24 joints."); }
 
         ComputeWorldJoints();
+        float bodyScale = _heightScaler != null ? _heightScaler.ScaleFactor : 1f;
+        float visualScale = _heightScaler != null && (transform == _heightScaler.transform || transform.IsChildOf(_heightScaler.transform)) ? 1f : bodyScale;
         for (int i = 0; i < 24; i++)
         {
             _joints[i].position = WorldJoints[i];
+            _joints[i].localScale = Vector3.one * (jointRadius * 2f * visualScale);
             bool tooCloseToCamera = hmd != null &&
                 (WorldJoints[i] - hmd.position).sqrMagnitude <=
-                minimumCameraDistanceMeters * minimumCameraDistanceMeters;
+                minimumCameraDistanceMeters * minimumCameraDistanceMeters * bodyScale * bodyScale;
             _joints[i].gameObject.SetActive(!tooCloseToCamera);
         }
         for (int i = 0; i < _bones.Length; i++)
         {
+            _bones[i].startWidth = _bones[i].endWidth = boneWidth * bodyScale;
             _bones[i].SetPosition(0, WorldJoints[Bones[i].a]);
             _bones[i].SetPosition(1, WorldJoints[Bones[i].b]);
         }
@@ -132,10 +137,12 @@ public class BodySkeletonRenderer : MonoBehaviour
 
     void ComputeWorldJoints()
     {
+        if (_heightScaler == null && hmd != null) _heightScaler = hmd.GetComponentInParent<PlayerHeightScaler>();
+        float bodyScale = _heightScaler != null ? _heightScaler.ScaleFactor : 1f;
         var src = receiver.receivedJoints;
         if (!alignToHead || hmd == null)
         {
-            for (int i = 0; i < 24; i++) WorldJoints[i] = src[i];
+            for (int i = 0; i < 24; i++) WorldJoints[i] = _heightScaler != null ? _heightScaler.ToDisplayWorld(src[i]) : src[i];
             return;
         }
 
@@ -148,10 +155,10 @@ public class BodySkeletonRenderer : MonoBehaviour
             ? Quaternion.FromToRotation(bFwd.normalized, cFwd.normalized)
             : Quaternion.identity;
 
-        Vector3 targetHead = hmd.position + hmd.rotation * headToEyeOffset;
+        Vector3 targetHead = hmd.position + hmd.rotation * headToEyeOffset * bodyScale;
         Vector3 bHead = src[HEAD];
         for (int i = 0; i < 24; i++)
-            WorldJoints[i] = targetHead + yaw * (src[i] - bHead);
+            WorldJoints[i] = targetHead + yaw * (src[i] - bHead) * bodyScale;
     }
 
     void SetVisible(bool v)

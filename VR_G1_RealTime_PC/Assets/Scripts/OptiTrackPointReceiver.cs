@@ -101,7 +101,32 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 	private Vector3 MotivePointToWorld(Vector3 motivePosition)
 	{
 		Vector3 converted = ConvertPosition(motivePosition);
-		return hasPointAlignment ? mocapToUnityRotation * converted + mocapToUnityTranslation : converted;
+		Vector3 world = hasPointAlignment ? mocapToUnityRotation * converted + mocapToUnityTranslation : converted;
+		return playerHeightScaler != null ? playerHeightScaler.ToDisplayWorld(world) : world;
+	}
+
+	private PlayerHeightScaler playerHeightScaler;
+	public string HeightScalingStatus => playerHeightScaler != null ? playerHeightScaler.Status : "";
+	private Vector3 AlignmentCameraPosition => playerHeightScaler != null ?
+		playerHeightScaler.ToTrackingWorld(vrCamera.position) : vrCamera.position;
+
+	public void ApplyPlayerPresentationScale(PlayerHeightScaler scaler, float factor, Vector3 pivot, Transform scaledRig)
+	{
+		playerHeightScaler = scaler;
+		bool parentWasScaled = pointParent != null && (pointParent == scaledRig || pointParent.IsChildOf(scaledRig));
+		if (!parentWasScaled) pointScale *= factor;
+		contactRadiusMeters *= factor;
+		minimumCameraDistanceMeters *= factor;
+		foreach (PointVisual visual in pointVisuals.Values)
+		{
+			if (visual.gameObject == null || parentWasScaled) continue;
+			Vector3 targetWorld = pointParent.TransformPoint(visual.targetLocalPosition);
+			visual.targetLocalPosition = pointParent.InverseTransformPoint(pivot + (targetWorld - pivot) * factor);
+			visual.gameObject.transform.position = pivot + (visual.gameObject.transform.position - pivot) * factor;
+			visual.gameObject.transform.localScale *= factor;
+		}
+		// Alignment remains in its original tracking space. The uniform display
+		// transform applies afterward, so good Pico poses cannot undo body scaling.
 	}
 
 	[Header("XR References")]
@@ -392,6 +417,12 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 
 		InitializeApartmentColliders();
 		InitializeHapticControllers();
+		if (xrOrigin != null && vrCamera != null)
+		{
+			playerHeightScaler = xrOrigin.GetComponent<PlayerHeightScaler>();
+			if (playerHeightScaler == null) playerHeightScaler = xrOrigin.gameObject.AddComponent<PlayerHeightScaler>();
+			playerHeightScaler.Initialize(xrOrigin, vrCamera, this);
+		}
 		MotiveRecordingController recordingController = GetComponent<MotiveRecordingController>();
 		if (recordingController == null) recordingController = gameObject.AddComponent<MotiveRecordingController>();
 		recordingController.Initialize(vrCamera != null ? vrCamera.GetComponent<Camera>() : null);
@@ -916,7 +947,7 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 		}
 
 		Vector3 desiredAlignmentTranslation =
-			vrCamera.position -
+			AlignmentCameraPosition -
 			desiredAlignmentRotation *
 			acceptedMotiveCameraPosition;
 
@@ -1093,7 +1124,7 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 			acceptedMotiveCameraRotation;
 
 		Vector3 positionError =
-			vrCamera.position -
+			AlignmentCameraPosition -
 			alignedMotiveCameraPosition;
 
 		float yawError =
@@ -1133,14 +1164,7 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 				pointVisuals.Add(trackedPoint.id, visual);
 			}
 
-			Vector3 convertedMotivePosition =
-				ConvertPosition(trackedPoint.position);
-
-			Vector3 alignedWorldPosition =
-				hasPointAlignment
-					? mocapToUnityRotation * convertedMotivePosition +
-						mocapToUnityTranslation
-					: convertedMotivePosition;
+			Vector3 alignedWorldPosition = MotivePointToWorld(trackedPoint.position);
 
 			visual.targetLocalPosition =
 				pointParent.InverseTransformPoint(
@@ -1561,7 +1585,7 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 	private float AlignmentErrorMeters()
 	{
 		if (!hasPointAlignment || vrCamera == null) return -1f;
-		return Vector3.Distance(vrCamera.position,
+		return Vector3.Distance(AlignmentCameraPosition,
 			mocapToUnityRotation * acceptedMotiveCameraPosition + mocapToUnityTranslation);
 	}
 
@@ -1701,6 +1725,7 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 
 	private void OnDisable()
 	{
+		if (playerHeightScaler != null) playerHeightScaler.Unregister(this);
 		running = false;
 
 		if (udpClient != null)
