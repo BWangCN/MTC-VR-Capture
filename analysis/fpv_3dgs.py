@@ -11,8 +11,8 @@ Checked against the camera rotations Unity logged ([XR Camera] Rot) at the match
 
 Rendering: the 3DGS (gsplat 1.5.3; checkpoint of the MTC_Next scene package, Gaussians in gsplat's normalised
 frame x_norm = T_mesh2norm x_scene, same convention as MTC_Next python/mtcnext/render/gs.py) gives colour and
-z-depth; the course objects and route markers (scene.glb, markers.glb) are rasterised with PyTorch3D (vertex
-colours, unlit as in VR) and drawn where they are nearer than the 3DGS. The room is ScanNet++ data (research use
+z-depth; the course objects (scene.glb, no route overlay) are rasterised with PyTorch3D (vertex colours, soft
+shading) and drawn where they are nearer than the 3DGS. The room is ScanNet++ data (research use
 only, not to be redistributed): keep the videos local.
 """
 import argparse
@@ -32,6 +32,8 @@ import scene_env as se  # noqa: E402
 from fit_smplx import quat_xyzw_to_matrix  # noqa: E402
 
 GLTF_TO_SCENE_R = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], float)     # (x, y, z)_scene = (z, x, y)_gltf + floor
+HOLE_GREY = 0.45                     # fills pixels the 3DGS leaves transparent
+OBJECT_DEPTH_BIAS_M = 0.01           # objects win ties with 3DGS splats poking up from the carpet at contacts
 
 
 # ------------------------------------------------------------------------------------------------ 3DGS
@@ -96,21 +98,23 @@ class Gaussians:
             img, alpha, _ = self.gsplat.rasterization(
                 self.means, self.quats, self.scales, self.opacities, self.colors, Vt, Kt, W, H, sh_degree=self.sh_degree,
                 render_mode="RGB+ED", near_plane=near * self.s, far_plane=far * self.s, packed=False)
-        rgb = img[0, ..., :3].clamp(0, 1)
+        a = alpha[0, ..., :1]
+        rgb = (img[0, ..., :3] + (1 - a) * HOLE_GREY).clamp(0, 1)         # rare holes: grey, not black
         z = img[0, ..., 3] / self.s
-        z = torch.where(alpha[0, ..., 0] > 0.5, z, torch.full_like(z, float("inf")))
+        z = torch.where(a[..., 0] > 0.5, z, torch.full_like(z, float("inf")))
         return rgb, z
 
 
 # ------------------------------------------------------------------------------------------------ meshes
 class Objects:
-    """Course objects and route markers, rasterised with PyTorch3D in the scene frame."""
+    """Course objects (gates, furniture, clutter, mug), rasterised with PyTorch3D in the scene frame. The route
+    overlay of markers.glb (route line, start/goal discs, mug spot) is left out: it is not part of the scene."""
 
     def __init__(self, env, device="cuda"):
         from pytorch3d.structures import Meshes
         Vs, Fs, Cs, n = [], [], [], 0
         for p in env.parts:
-            if p.kind in ("room", "collision"):
+            if p.kind in ("room", "collision", "route"):
                 continue
             Vs.append(gltf_to_scene(p.V, env.floor_z))
             Fs.append(p.F.astype(np.int64) + n)
@@ -119,6 +123,10 @@ class Objects:
         self.V = torch.tensor(np.concatenate(Vs), dtype=torch.float32, device=device)
         self.F = torch.tensor(np.concatenate(Fs), dtype=torch.int64, device=device)
         self.C = torch.tensor(np.concatenate(Cs), dtype=torch.float32, device=device)
+        tri = self.V[self.F]
+        n_f = torch.nn.functional.normalize(torch.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0], dim=-1), dim=-1)
+        light = torch.nn.functional.normalize(torch.tensor([0.3, 0.2, 1.0], device=device), dim=0)   # from above
+        self.shade = 0.62 + 0.38 * (n_f @ light).abs()                    # per face; two-sided, soft
         self.Meshes = Meshes
         self.device = device
 
@@ -129,7 +137,8 @@ class Objects:
         tw2c = torch.tensor(-R_scene_cam.T @ t_scene, dtype=torch.float32, device=self.device)[None]
         cams = cameras_from_opencv_projection(Rw2c, tw2c, torch.tensor(K, dtype=torch.float32, device=self.device)[None],
                                               torch.tensor([[H, W]], device=self.device))
-        rs = RasterizationSettings(image_size=(H, W), faces_per_pixel=1, blur_radius=0.0, bin_size=0, cull_backfaces=False)
+        rs = RasterizationSettings(image_size=(H, W), faces_per_pixel=1, blur_radius=0.0, bin_size=None,
+                                   max_faces_per_bin=int(self.F.shape[0]), cull_backfaces=False)   # coarse-to-fine bins
         frag = MeshRasterizer(cameras=cams, raster_settings=rs)(self.Meshes([self.V], [self.F]))
         pf = frag.pix_to_face[0, ..., 0]
         hit = pf >= 0
@@ -137,7 +146,7 @@ class Objects:
         col = torch.zeros(H, W, 3, device=self.device)
         if hit.any():
             fv = self.F[pf[hit]]                                         # (n, 3) vertex ids
-            col[hit] = (bary[hit][..., None] * self.C[fv]).sum(1)
+            col[hit] = (bary[hit][..., None] * self.C[fv]).sum(1) * self.shade[pf[hit]][:, None]
         z = torch.where(hit, frag.zbuf[0, ..., 0], torch.full_like(frag.zbuf[0, ..., 0], float("inf")))
         return col, z
 
@@ -242,7 +251,7 @@ def main(argv=None):
         for t_s, R in zip(ts, Rs):
             rgb, z = gs.render(K, W, H, t_s, R)
             ocol, oz = obj.render(K, W, H, t_s, R)
-            front = oz < z
+            front = oz < z + OBJECT_DEPTH_BIAS_M
             img = torch.where(front[..., None], ocol, rgb)
             ff.stdin.write((img.clamp(0, 1) * 255).round().byte().cpu().numpy().tobytes())
         ff.stdin.close()

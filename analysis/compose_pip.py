@@ -39,15 +39,18 @@ def main(argv=None):
     ap.add_argument("--inset-width", type=int, default=640)
     a = ap.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
+    jobs = []
     for m in sorted(glob.glob(os.path.join(a.main, "*_smplx_main.mp4"))):
         name = re.sub(r"^\d+_", "", os.path.basename(m)).replace("_smplx_main.mp4", "")
         fp = os.path.join(a.fpv, f"{name}_fpv3dgs.mp4")
         if not os.path.exists(fp):
             print(f"{name}: no first-person video, skipped")
             continue
-        out = os.path.join(a.out, os.path.basename(m).replace("_smplx_main.mp4", "_smplx_fpv3dgs.mp4"))
-        compose(m, fp, out, a.inset_width)
-        print("wrote", out, flush=True)
+        jobs.append((m, fp, os.path.join(a.out, os.path.basename(m).replace("_smplx_main.mp4", "_smplx_fpv3dgs.mp4"))))
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=len(jobs) or 1) as ex:            # one ffmpeg per take, in parallel
+        for out in ex.map(lambda j: compose(j[0], j[1], j[2], a.inset_width), jobs):
+            print("wrote", out, flush=True)
     return 0
 
 

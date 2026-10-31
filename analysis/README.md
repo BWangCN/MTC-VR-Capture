@@ -174,3 +174,9 @@ $PY analysis/compose_pip.py                                               # -> d
   files lack `hands_meanl/r`). The fits keep hand pose 0 (no finger markers); a standard `smplx` loader with its
   default `flat_hand_mean=False` shows the same relaxed hands. The display mesh keeps hand vertices at full
   resolution (vertex clustering at 2 cm elsewhere); clustering fingers at 2.5 cm had torn them apart.
+- First-person video: course objects only (no route overlay from markers.glb), softly shaded, 1 cm depth bias
+  against carpet splats; PyTorch3D's binned rasteriser (the naive one, bin_size=0, took 0.53 s per 720p frame).
+  About 35 ms per frame in all; the six takes render in about 3.5 min. `compose_pip.py` encodes the six
+  picture-in-picture videos in parallel (about 20 s).
+- 3DGS used: scene package `7b6477cb95_test_only`, primary `3dgs_meshdepth_w0.3/ckpt_final.pt`
+  (SHA-256 `ee4d6e10…`, matches the manifest; 1,165,965 Gaussians, val PSNR 30.9), in `analysis/data/3dgs/`.
