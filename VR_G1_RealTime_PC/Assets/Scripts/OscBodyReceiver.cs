@@ -32,9 +32,14 @@ public class OscBodyReceiver : MonoBehaviour
     [Tooltip("Space the OSC tracker coords are expressed in (the play-space origin). " +
              "Usually the XR Origin. Auto-found by name if left empty. If null, used as-is (world).")]
     public Transform alignTo;
+    [Tooltip("Camera used to hide nearby tracker spheres. Auto = Camera.main.")]
+    public Transform hmd;
 
     [Header("Look")]
     public float markerRadius = 0.05f;
+    [Tooltip("Hide tracker spheres whose centers are within this distance of the camera, in meters.")]
+    [Min(0f)]
+    public float minimumCameraDistanceMeters = 0.15f;
     public Color color = new Color(1f, 0.2f, 0.9f, 1f);
 
     [Header("Status (read-only)")]
@@ -156,6 +161,20 @@ public class OscBodyReceiver : MonoBehaviour
                 sb.AppendLine($"  {kv.Key} = [{(kv.Value == null ? "" : string.Join(", ", Array.ConvertAll(kv.Value, x => x.ToString("F3"))))}]");
             _onScreen = sb.ToString();
             Debug.Log(_onScreen);
+        }
+    }
+
+    void LateUpdate()
+    {
+        if (hmd == null && Camera.main != null) hmd = Camera.main.transform;
+
+        foreach (Transform marker in _markers.Values)
+        {
+            if (marker == null) continue;
+            bool tooCloseToCamera = hmd != null &&
+                (marker.position - hmd.position).sqrMagnitude <=
+                minimumCameraDistanceMeters * minimumCameraDistanceMeters;
+            marker.gameObject.SetActive(!tooCloseToCamera);
         }
     }
 

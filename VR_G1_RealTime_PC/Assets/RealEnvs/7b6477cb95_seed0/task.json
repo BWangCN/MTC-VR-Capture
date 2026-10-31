@@ -1,0 +1,315 @@
+{
+ "schema_version": "mtcnext_task_v1",
+ "task_id": "obstacle_course_seed_0",
+ "scene_id": "7b6477cb95",
+ "scene_hash": "sha256:8e81c2efbe591d900ad41ec382361456ee2619f09f629c07d3ca1603c8fead43",
+ "test_only": true,
+ "object": {
+  "id": "gso:Cole_Hardware_Mug_Classic_Blue",
+  "package": "data/external/objects/processed/gso_Cole_Hardware_Mug_Classic_Blue"
+ },
+ "frame": "scene",
+ "start_pose": {
+  "position_m": [
+   2.66188,
+   2.54585,
+   0.79041
+  ],
+  "quaternion_wxyz": [
+   0.5759337,
+   -0.0066315,
+   0.0031156,
+   0.8174636
+  ]
+ },
+ "goal_region": {
+  "center_m": [
+   0.6964592113608731,
+   0.8578405942416876,
+   0.5502
+  ],
+  "radius_m": 0.1,
+  "shape": "disk on the support plane"
+ },
+ "success": {
+  "cup_in_goal_region": true,
+  "upright_within_deg": 20,
+  "released": true,
+  "route_goal_radius_m": 0.3,
+  "target_within_m": 0.1
+ },
+ "instruction": "Walk from the start through the gates (walk, squeeze), pick up the mug, put it on the goal spot, then walk to the goal.",
+ "time_limit_s": 180,
+ "layout": "data/scene_packages/7b6477cb95_test_only/layouts/seed_0/layout.json",
+ "route": {
+  "start_m": [
+   3.5137,
+   3.353,
+   0.0769
+  ],
+  "goal_m": [
+   4.1637,
+   0.553,
+   0.0769
+  ],
+  "waypoints_m": [
+   [
+    3.5137,
+    3.353,
+    0.0769
+   ],
+   [
+    1.6137000000000001,
+    3.353,
+    0.0769
+   ],
+   [
+    1.4637,
+    3.253,
+    0.0769
+   ],
+   [
+    1.206301708579559,
+    3.177855747741363,
+    0.0769
+   ],
+   [
+    1.1355285339274148,
+    1.7417315556326216,
+    0.0769
+   ],
+   [
+    1.6952210511089638,
+    1.1823723938003214,
+    0.0769
+   ],
+   [
+    2.958333652541406,
+    0.8748881566391804,
+    0.0769
+   ],
+   [
+    3.3637000000000006,
+    0.553,
+    0.0769
+   ],
+   [
+    4.1637,
+    0.553,
+    0.0769
+   ]
+  ]
+ },
+ "gates": [
+  {
+   "mode": "walk",
+   "center_m": [
+    1.170915121253487,
+    2.4597936516869923,
+    0.0769
+   ],
+   "yaw_deg": -92.82,
+   "gap_m": 0.797258513717564,
+   "clearance_m": null
+  },
+  {
+   "mode": "squeeze",
+   "center_m": [
+    2.326777351825185,
+    1.028630275219751,
+    0.0769
+   ],
+   "yaw_deg": -13.68,
+   "gap_m": 0.2820000052452085,
+   "clearance_m": 0.1704275837589083
+  }
+ ],
+ "objects": [
+  {
+   "id": "item_00",
+   "role": "gate",
+   "asset": "data/external/objects/processed/abo_B07GG2X2MX",
+   "position_m": [
+    1.68061,
+    2.43468,
+    0.0849
+   ],
+   "quaternion_wxyz": [
+    0.689485,
+    0.0,
+    0.0,
+    -0.7243
+   ]
+  },
+  {
+   "id": "item_01",
+   "role": "gate",
+   "asset": "data/scene_packages/7b6477cb95_test_only/layouts/seed_0/primitives/narrow_gate_gap282_panel_width169",
+   "position_m": [
+    2.32678,
+    1.02863,
+    0.0769
+   ],
+   "quaternion_wxyz": [
+    0.9928809,
+    0.0,
+    0.0,
+    -0.1191111
+   ]
+  },
+  {
+   "id": "item_02",
+   "role": "target",
+   "asset": "data/external/objects/processed/gso_Cole_Hardware_Mug_Classic_Blue",
+   "position_m": [
+    2.66188,
+    2.54585,
+    0.79041
+   ],
+   "quaternion_wxyz": [
+    0.5759337,
+    -0.0066315,
+    0.0031156,
+    0.8174636
+   ]
+  },
+  {
+   "id": "item_03",
+   "role": "clutter_floor",
+   "asset": "data/external/objects/processed/gso_Womens_Hikerfish_Boot_in_Linen_Leather_Sparkle_Suede_QktIyAkonrU",
+   "position_m": [
+    0.86464,
+    1.21438,
+    0.07824
+   ],
+   "quaternion_wxyz": [
+    0.8132186,
+    -0.0024234,
+    0.0026711,
+    0.5819472
+   ]
+  },
+  {
+   "id": "item_04",
+   "role": "clutter_floor",
+   "asset": "data/external/objects/processed/gso_Playmates_nickelodeon_teenage_mutant_ninja_turtles_shredder",
+   "position_m": [
+    2.09563,
+    2.58058,
+    0.07723
+   ],
+   "quaternion_wxyz": [
+    0.8943109,
+    0.0047041,
+    -0.0022711,
+    0.4474156
+   ]
+  },
+  {
+   "id": "item_05",
+   "role": "clutter_floor",
+   "asset": "data/external/objects/processed/gso_Santa_Cruz_Mens_umxTczr1Ygg",
+   "position_m": [
+    0.54619,
+    1.32487,
+    0.07672
+   ],
+   "quaternion_wxyz": [
+    0.3773917,
+    0.0004532,
+    -0.0001754,
+    0.9260536
+   ]
+  },
+  {
+   "id": "item_06",
+   "role": "clutter_floor",
+   "asset": "data/external/objects/processed/gso_Big_O_Sponges_Assorted_Cellulose_12_pack",
+   "position_m": [
+    0.37407,
+    1.69266,
+    0.07652
+   ],
+   "quaternion_wxyz": [
+    0.2325333,
+    -0.0003404,
+    0.0029578,
+    0.9725839
+   ]
+  },
+  {
+   "id": "item_07",
+   "role": "clutter_surface",
+   "asset": "data/external/objects/processed/gso_Super_Mario_Kart_Super_Nintendo_Entertainment_System",
+   "position_m": [
+    3.62898,
+    1.57302,
+    0.8268
+   ],
+   "quaternion_wxyz": [
+    0.2770898,
+    0.0055036,
+    0.0038268,
+    0.9608206
+   ]
+  },
+  {
+   "id": "item_08",
+   "role": "clutter_surface",
+   "asset": "data/external/objects/processed/gso_Eat_to_Live_The_Amazing_NutrientRich_Program_for_Fast_and_Sustained_Weight_Loss_Revised_Edition_Book",
+   "position_m": [
+    1.00255,
+    0.85488,
+    0.12847
+   ],
+   "quaternion_wxyz": [
+    0.6272179,
+    -0.0025335,
+    -0.0034108,
+    -0.7788323
+   ]
+  },
+  {
+   "id": "item_09",
+   "role": "clutter_surface",
+   "asset": "data/external/objects/processed/gso_Threshold_Porcelain_Coffee_Mug_All_Over_Bead_White",
+   "position_m": [
+    3.83729,
+    1.45051,
+    0.82688
+   ],
+   "quaternion_wxyz": [
+    0.5935577,
+    -0.0060035,
+    -0.0007812,
+    -0.8047687
+   ]
+  },
+  {
+   "id": "item_10",
+   "role": "clutter_surface",
+   "asset": "data/external/objects/processed/gso_Office_Depot_Dell_Series_1_Remanufactured_Ink_Cartridge_TriColor",
+   "position_m": [
+    3.67667,
+    1.32162,
+    0.82614
+   ],
+   "quaternion_wxyz": [
+    0.9744138,
+    -0.0029822,
+    -0.0034478,
+    0.2247155
+   ]
+  }
+ ],
+ "target": "item_02",
+ "goal_spot": {
+  "position_m": [
+   0.6964592113608731,
+   0.8578405942416876,
+   0.5502
+  ],
+  "support_plane": 2,
+  "label": "bookshelf"
+ }
+}

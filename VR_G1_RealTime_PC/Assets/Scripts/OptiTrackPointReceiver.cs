@@ -21,6 +21,11 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 	[SerializeField]
 	private float pointScale = 0.05f;
 
+	[Tooltip("Hide point spheres whose centers are within this distance of the VR camera, in meters.")]
+	[Min(0.0f)]
+	[SerializeField]
+	private float minimumCameraDistanceMeters = 0.15f;
+
 	[SerializeField]
 	private Transform pointParent;
 
@@ -92,8 +97,12 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 	[SerializeField]
 	private float rotationCorrectionRate = 1.5f;
 
+	[Tooltip("Limit translation catch-up speed. Leave off so markers can converge from any distance.")]
+	[SerializeField]
+	private bool limitPositionCorrectionSpeed = false;
+
 	[Tooltip(
-		"Maximum speed at which the mocap point alignment translation may change."
+		"Maximum translation speed when Limit Position Correction Speed is enabled. Zero means unlimited."
 	)]
 	[Min(0.0f)]
 	[SerializeField]
@@ -124,16 +133,8 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 	private float motivePoseTimeoutSeconds = 0.25f;
 
 	[Tooltip(
-		"Reject a new Motive pose if it jumps farther than this distance " +
-		"from the previous accepted pose. Set to zero to disable."
-	)]
-	[Min(0.0f)]
-	[SerializeField]
-	private float maximumAcceptedPositionJumpMeters = 0.75f;
-
-	[Tooltip(
-		"Reject a new Motive pose if yaw jumps farther than this amount " +
-		"from the previous accepted pose. Set to zero to disable."
+		"Keep the previous rotation if yaw jumps farther than this amount. " +
+		"Position still updates; rotation is reacquired after a tracking timeout. Zero disables this check."
 	)]
 	[Min(0.0f)]
 	[SerializeField]
@@ -226,6 +227,8 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 	private long parseFailures;
 	private int displayedFrames;
 	private int lastDisplayedFrameNumber = -1;
+	private long lastDisplayedReceiveTimestamp;
+	private string latestMotivePoseStatus = "no frame";
 	private float nextDiagnosticsTime;
 
 	private bool hasAcceptedMotivePose;
@@ -264,6 +267,7 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 	private sealed class PointVisual
 	{
 		public GameObject gameObject;
+		public Renderer[] renderers;
 		public Vector3 targetLocalPosition;
 		public float lastSeenTime;
 	}
@@ -271,6 +275,7 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 	private sealed class PointFrame
 	{
 		public int frameNumber;
+		public long receivedTimestamp;
 		public TrackedPoint[] points;
 
 		public bool picoAvailable;
@@ -281,8 +286,12 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 		public Quaternion picoRotation;
 	}
 
-	private void Start()
+	private void OnEnable()
 	{
+		// Unity calls OnEnable again after a Play-mode script reload; Start is not
+		// called again, so receiver sockets/threads must be restored here.
+		hasAcceptedMotivePose = false;
+		acceptedPoseArrivalTime = float.NegativeInfinity;
 		QualitySettings.vSyncCount = 0;
 		Application.targetFrameRate = 90;
 		nextDiagnosticsTime = Time.unscaledTime + 1.0f;
@@ -305,9 +314,22 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 				"OptiTrackPointReceiver: VR Camera is not assigned."
 			);
 		}
+		else
+		{
+			CollisionScreenBorder screenBorder = GetComponent<CollisionScreenBorder>();
+			if (screenBorder == null)
+			{
+				screenBorder = gameObject.AddComponent<CollisionScreenBorder>();
+			}
+
+			screenBorder.Initialize(this, vrCamera.GetComponent<Camera>());
+		}
 
 		InitializeApartmentColliders();
 		InitializeHapticControllers();
+		MotiveRecordingController recordingController = GetComponent<MotiveRecordingController>();
+		if (recordingController == null) recordingController = gameObject.AddComponent<MotiveRecordingController>();
+		recordingController.Initialize(vrCamera != null ? vrCamera.GetComponent<Camera>() : null);
 		StartReceiver();
 	}
 
@@ -407,6 +429,7 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 			try
 			{
 				byte[] bytes = udpClient.Receive(ref remoteEndpoint);
+				long receivedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
 				Interlocked.Increment(ref packetsReceived);
 
 				string message = Encoding.UTF8.GetString(bytes);
@@ -414,6 +437,7 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 
 				if (parsed != null)
 				{
+					parsed.receivedTimestamp = receivedTimestamp;
 					Interlocked.Increment(ref parsedFrames);
 					lock (latestFrameLock)
 					{
@@ -663,6 +687,9 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 			displayedFrames++;
 			lastDisplayedFrameNumber =
 				frameToDisplay.frameNumber;
+			lastDisplayedReceiveTimestamp = frameToDisplay.receivedTimestamp;
+			latestMotivePoseStatus = $"available={frameToDisplay.picoAvailable}, " +
+				$"good={frameToDisplay.picoGoodQuality}, error={frameToDisplay.picoMeanError * 1000f:F2} mm";
 
 			if (PosePassesQualityChecks(frameToDisplay))
 			{
@@ -693,7 +720,7 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 			return;
 		}
 
-		UpdatePointAlignment();
+		UpdatePointAlignment(Time.unscaledDeltaTime);
 	}
 
 	private bool PosePassesQualityChecks(PointFrame frame)
@@ -736,31 +763,12 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 		Quaternion candidateCameraRotation =
 			rigidBodyRotation;
 
-		if (hasAcceptedMotivePose)
+		// A valid new position is always a new alignment target, regardless of distance.
+		// Rotation outliers must not starve translation or latch the whole pose forever.
+		bool previousPoseIsFresh = hasAcceptedMotivePose &&
+			Time.unscaledTime - acceptedPoseArrivalTime <= motivePoseTimeoutSeconds;
+		if (previousPoseIsFresh)
 		{
-			if (maximumAcceptedPositionJumpMeters > 0.0f)
-			{
-				float positionJump =
-					Vector3.Distance(
-						candidateCameraPosition,
-						acceptedMotiveCameraPosition
-					);
-
-				if (positionJump >
-					maximumAcceptedPositionJumpMeters)
-				{
-					if (logFusionStatus)
-					{
-						Debug.LogWarning(
-							"Rejected Motive pose: " +
-							$"position jumped {positionJump:F3} m."
-						);
-					}
-
-					return;
-				}
-			}
-
 			if (maximumAcceptedYawJumpDegrees > 0.0f)
 			{
 				float yawJump =
@@ -777,12 +785,12 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 					if (logFusionStatus)
 					{
 						Debug.LogWarning(
-							"Rejected Motive pose: " +
-							$"yaw jumped {yawJump:F1} degrees."
+							"Kept previous Motive rotation: " +
+							$"yaw jumped {yawJump:F1} degrees; position still updates."
 						);
 					}
 
-					return;
+					candidateCameraRotation = acceptedMotiveCameraRotation;
 				}
 			}
 		}
@@ -802,10 +810,8 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 		hasAcceptedMotivePose = true;
 	}
 
-	private void UpdatePointAlignment()
+	private void UpdatePointAlignment(float deltaTime)
 	{
-		float deltaTime = Time.unscaledDeltaTime;
-
 		if (deltaTime <= 0.0f)
 		{
 			return;
@@ -906,11 +912,9 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 			deltaTime;
 
 		mocapToUnityTranslation =
-			Vector3.MoveTowards(
-				mocapToUnityTranslation,
-				smoothedTranslation,
-				maximumDistanceThisFrame
-			);
+			limitPositionCorrectionSpeed && maximumCorrectionSpeedMetersPerSecond > 0.0f
+				? Vector3.MoveTowards(mocapToUnityTranslation, smoothedTranslation, maximumDistanceThisFrame)
+				: smoothedTranslation;
 
 		LogFusionStatus();
 	}
@@ -1055,9 +1059,10 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 		{
 			TrackedPoint trackedPoint = frame.points[i];
 
-			if (!pointVisuals.TryGetValue(
+			bool isNewPoint = !pointVisuals.TryGetValue(
 					trackedPoint.id,
-					out PointVisual visual))
+					out PointVisual visual);
+			if (isNewPoint)
 			{
 				visual = CreatePointVisual(trackedPoint.id);
 				pointVisuals.Add(trackedPoint.id, visual);
@@ -1079,11 +1084,13 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 
 			visual.lastSeenTime = now;
 
-			if (!visual.gameObject.activeSelf)
+			if (isNewPoint || !visual.gameObject.activeSelf)
 			{
-				visual.gameObject.SetActive(true);
+				// The first observation has no previous measured position to smooth
+				// from. Place it directly instead of animating from the parent's origin.
 				visual.gameObject.transform.localPosition =
 					visual.targetLocalPosition;
+				visual.gameObject.SetActive(true);
 			}
 		}
 	}
@@ -1121,6 +1128,7 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 		return new PointVisual
 		{
 			gameObject = point,
+			renderers = point.GetComponentsInChildren<Renderer>(true),
 			targetLocalPosition =
 				point.transform.localPosition,
 			lastSeenTime = Time.unscaledTime
@@ -1162,6 +1170,20 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 					visual.targetLocalPosition,
 					alpha
 				);
+
+			// Hide only the rendering; keep tracking and apartment contact active.
+			bool tooCloseToCamera =
+				vrCamera != null &&
+				(visual.gameObject.transform.position - vrCamera.position).sqrMagnitude <=
+				minimumCameraDistanceMeters * minimumCameraDistanceMeters;
+
+			foreach (Renderer pointRenderer in visual.renderers)
+			{
+				if (pointRenderer != null)
+				{
+					pointRenderer.forceRenderingOff = tooCloseToCamera;
+				}
+			}
 		}
 	}
 
@@ -1445,12 +1467,32 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 		Debug.Log(
 			$"OptiTrack | UDP {received}/s | parsed {parsed}/s | " +
 			$"displayed {displayedFrames}/s | last frame {lastDisplayedFrameNumber} | " +
-			$"parse failures {failures} | touching apartment {IsTouchingApartment}"
+			$"parse failures {failures} | touching apartment {IsTouchingApartment}" +
+			$" | local frame age {LocalFrameAgeMilliseconds():F1} ms" +
+			$" | alignment error {AlignmentErrorMeters():F3} m" +
+			$" | pose age {(Time.unscaledTime - acceptedPoseArrivalTime):F3} s" +
+			$" | smoothing point={pointSmoothingRate:F2}, position={positionCorrectionRate:F2}" +
+			$" | PICO {latestMotivePoseStatus}"
 		);
 
 		displayedFrames = 0;
 		nextDiagnosticsTime =
 			Time.unscaledTime + 1.0f;
+	}
+
+	// Local age starts when Unity receives UDP, not at camera capture on the Motive PC.
+	private double LocalFrameAgeMilliseconds()
+	{
+		return lastDisplayedReceiveTimestamp == 0 ? -1.0 :
+			(System.Diagnostics.Stopwatch.GetTimestamp() - lastDisplayedReceiveTimestamp) *
+			1000.0 / System.Diagnostics.Stopwatch.Frequency;
+	}
+
+	private float AlignmentErrorMeters()
+	{
+		if (!hasPointAlignment || vrCamera == null) return -1f;
+		return Vector3.Distance(vrCamera.position,
+			mocapToUnityRotation * acceptedMotiveCameraPosition + mocapToUnityTranslation);
 	}
 
 	private Vector3 ConvertPosition(
@@ -1587,7 +1629,7 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 		}
 	}
 
-	private void OnDestroy()
+	private void OnDisable()
 	{
 		running = false;
 
@@ -1604,5 +1646,13 @@ public sealed class OptiTrackPointReceiver : MonoBehaviour
 		}
 
 		receiveThread = null;
+		lock (latestFrameLock) { latestFrame = null; }
+		// Generated markers are not serialized with this dictionary across a domain
+		// reload. Remove them so a reload cannot leave a frozen duplicate cloud.
+		foreach (PointVisual visual in pointVisuals.Values)
+		{
+			if (visual.gameObject != null) Destroy(visual.gameObject);
+		}
+		pointVisuals.Clear();
 	}
 }

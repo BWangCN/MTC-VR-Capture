@@ -31,6 +31,9 @@ public class BodySkeletonRenderer : MonoBehaviour
 
     [Header("Look")]
     public float jointRadius = 0.03f;
+    [Tooltip("Hide joint spheres whose centers are within this distance of the camera, in meters.")]
+    [Min(0f)]
+    public float minimumCameraDistanceMeters = 0.15f;
     public float boneWidth = 0.018f;
     public Color skeletonColor = new Color(0.2f, 0.9f, 1f, 1f);
 
@@ -112,7 +115,14 @@ public class BodySkeletonRenderer : MonoBehaviour
         if (!hasData) { hasData = true; SetVisible(true); Debug.Log("[BodySkeleton] Body data flowing — rendering 24 joints."); }
 
         ComputeWorldJoints();
-        for (int i = 0; i < 24; i++) _joints[i].position = WorldJoints[i];
+        for (int i = 0; i < 24; i++)
+        {
+            _joints[i].position = WorldJoints[i];
+            bool tooCloseToCamera = hmd != null &&
+                (WorldJoints[i] - hmd.position).sqrMagnitude <=
+                minimumCameraDistanceMeters * minimumCameraDistanceMeters;
+            _joints[i].gameObject.SetActive(!tooCloseToCamera);
+        }
         for (int i = 0; i < _bones.Length; i++)
         {
             _bones[i].SetPosition(0, WorldJoints[Bones[i].a]);

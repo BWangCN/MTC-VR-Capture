@@ -29,6 +29,7 @@
 
 #include "NatNetClient.h"
 #include "NatNetTypes.h"
+#include "MocapRecording.h"
 
 namespace
 {
@@ -69,9 +70,6 @@ namespace
     // Require a track to exist for this many matched frames before sending it.
     constexpr int kMinimumTrackAgeFrames = 3;
 
-    // Print diagnostics every N NatNet frames.
-    constexpr int kPrintEveryNFrames = 10;
-
     constexpr float kMaximumPicoMeanErrorMeters = 0.01f;
 
     // =============================================================================
@@ -82,6 +80,16 @@ namespace
     std::atomic<std::uint64_t> g_framesReceived{0};
     std::atomic<std::uint64_t> g_missingFrameIDs{0};
     std::atomic<int> g_lastFrameNumber{-1};
+    // Only the main thread writes to the console. A blocked terminal must never
+    // hold up NatNet's receive callback and accumulate old tracking frames.
+    std::atomic<std::size_t> g_rawPointCount{0};
+    std::atomic<std::size_t> g_activePointCount{0};
+    std::atomic<std::uint64_t> g_sendErrors{0};
+    std::atomic<std::uint64_t> g_serverClockFrequency{0};
+    std::atomic<double> g_cameraAgeMilliseconds{-1};
+    std::atomic<double> g_transitMilliseconds{-1};
+    std::atomic<double> g_softwareMilliseconds{-1};
+    std::atomic<double> g_maximumCallbackMilliseconds{0};
 
     // =============================================================================
     // Data structures
@@ -102,7 +110,8 @@ namespace
 
     constexpr const char *kPicoRigidBodyName = "Pico";
 
-    int g_picoRigidBodyID = -1;
+    std::atomic<int> g_picoRigidBodyID{-1};
+    mocap_recording::Recorder g_recorder;
 
     struct RigidBodyPose
     {
@@ -325,8 +334,9 @@ namespace
             }
         }
 
-        // Do not free descriptions.
-        // NatNetClient owns the returned memory.
+        // GetDataDescriptionList allocates caller-owned descriptions (SDK sample
+        // clients pair each successful query with NatNet_FreeDescriptions).
+        NatNet_FreeDescriptions(descriptions);
 
         if (!found)
         {
@@ -351,7 +361,8 @@ namespace
     {
         RigidBodyPose pose;
 
-        if (g_picoRigidBodyID < 0)
+        const int picoID = g_picoRigidBodyID.load();
+        if (picoID < 0)
         {
             return pose;
         }
@@ -363,7 +374,7 @@ namespace
             const sRigidBodyData &rigidBody =
                 frame.RigidBodies[i];
 
-            if (rigidBody.ID != g_picoRigidBodyID)
+            if (rigidBody.ID != picoID)
             {
                 continue;
             }
@@ -486,10 +497,7 @@ namespace
 
         if (result == SOCKET_ERROR)
         {
-            std::cerr
-                << "Unity UDP send failed. Error: "
-                << WSAGetLastError()
-                << '\n';
+            g_sendErrors.fetch_add(1, std::memory_order_relaxed);
         }
 #else
         (void)frameNumber;
@@ -750,87 +758,6 @@ namespace
     }
 
     // =============================================================================
-    // Diagnostics
-    // =============================================================================
-
-    void printActiveMarkers(
-        int frameNumber,
-        std::size_t rawPointCount)
-    {
-        std::size_t activeVisibleCount = 0;
-
-        for (const MarkerTrack &track : g_tracks)
-        {
-            if (track.active &&
-                track.matchedThisFrame &&
-                track.ageFrames >=
-                    kMinimumTrackAgeFrames)
-            {
-                ++activeVisibleCount;
-            }
-        }
-
-        std::cout
-            << std::fixed
-            << std::setprecision(4)
-            << "\n========================================"
-            << "\nFrame: "
-            << frameNumber
-            << "\nRaw marker points: "
-            << rawPointCount
-            << "\nCurrent visible tracks: "
-            << g_tracks.size()
-            << "\nActive visible points: "
-            << activeVisibleCount
-            << '\n';
-
-        for (const MarkerTrack &track : g_tracks)
-        {
-            if (!track.active ||
-                !track.matchedThisFrame ||
-                track.ageFrames <
-                    kMinimumTrackAgeFrames)
-            {
-                continue;
-            }
-
-            const double movementThisFrame =
-                pointDistance(
-                    track.currentPosition,
-                    track.previousPosition);
-
-            const double displacementFromTrackStart =
-                pointDistance(
-                    track.currentPosition,
-                    track.activationReferencePosition);
-
-            std::cout
-                << "\nTrack ID: "
-                << track.id
-                << "\n  Position: ["
-                << track.currentPosition.x
-                << ", "
-                << track.currentPosition.y
-                << ", "
-                << track.currentPosition.z
-                << "]"
-                << "\n  Movement this frame: "
-                << movementThisFrame
-                << " m"
-                << "\n  Displacement from track start: "
-                << displacementFromTrackStart
-                << " m"
-                << "\n  Track age: "
-                << track.ageFrames
-                << " frames"
-                << '\n';
-        }
-
-        std::cout
-            << "========================================\n";
-    }
-
-    // =============================================================================
     // NatNet callback
     // =============================================================================
 
@@ -843,7 +770,26 @@ namespace
             return;
         }
 
-        (void)userData;
+        const auto callbackStart = std::chrono::steady_clock::now();
+        const auto receiveUnixNs = mocap_recording::unixNanoseconds();
+        const auto receiveSteadyNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            callbackStart.time_since_epoch()).count();
+        g_recorder.capture(*frame, g_picoRigidBodyID.load(), receiveUnixNs, receiveSteadyNs);
+        auto *client = static_cast<NatNetClient *>(userData);
+        // NatNet's synchronized clock measures age BEFORE Unity receives a frame.
+        // Zero timestamps (e.g. playback/unsupported camera systems) are unavailable.
+        const double transitMs = client && frame->TransmitTimestamp
+            ? client->SecondsSinceHostTimestamp(frame->TransmitTimestamp) * 1000.0 : -1.0;
+        const double cameraMs = client && frame->CameraMidExposureTimestamp
+            ? client->SecondsSinceHostTimestamp(frame->CameraMidExposureTimestamp) * 1000.0 : -1.0;
+        g_transitMilliseconds.store(std::isfinite(transitMs) ? transitMs : -1.0, std::memory_order_relaxed);
+        g_cameraAgeMilliseconds.store(std::isfinite(cameraMs) ? cameraMs : -1.0, std::memory_order_relaxed);
+        const auto frequency = g_serverClockFrequency.load(std::memory_order_relaxed);
+        const bool softwareAvailable = frequency && frame->CameraDataReceivedTimestamp &&
+            frame->TransmitTimestamp >= frame->CameraDataReceivedTimestamp;
+        g_softwareMilliseconds.store(softwareAvailable
+            ? (frame->TransmitTimestamp - frame->CameraDataReceivedTimestamp) * 1000.0 / frequency : -1.0,
+            std::memory_order_relaxed);
 
         g_framesReceived.fetch_add(
             1,
@@ -885,21 +831,20 @@ namespace
             activePoints,
             picoPose);
 
-        if (frame->iFrame %
-                kPrintEveryNFrames ==
-            0)
-        {
-            printActiveMarkers(
-                frame->iFrame,
-                points.size());
-        }
+        g_rawPointCount.store(points.size(), std::memory_order_relaxed);
+        g_activePointCount.store(activePoints.size(), std::memory_order_relaxed);
+        const double processingMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - callbackStart).count();
+        double previousMaximum = g_maximumCallbackMilliseconds.load(std::memory_order_relaxed);
+        while (processingMs > previousMaximum && !g_maximumCallbackMilliseconds.compare_exchange_weak(
+            previousMaximum, processingMs, std::memory_order_relaxed)) {}
     }
 
     // =============================================================================
     // Motive frame-rate query
     // =============================================================================
 
-    void queryMotiveFrameRate(
+    float queryMotiveFrameRate(
         NatNetClient &client)
     {
         void *response = nullptr;
@@ -925,6 +870,7 @@ namespace
                 << "  Configured Motive frame rate: "
                 << configuredFrameRate
                 << " Hz\n";
+            return configuredFrameRate;
         }
         else
         {
@@ -934,6 +880,39 @@ namespace
                 << result
                 << '\n';
         }
+        return 0.0f;
+    }
+
+    std::string recordingMetadata(NatNetClient& client, const sServerDescription& server, float frameRate)
+    {
+        sDataDescriptions* descriptions = nullptr;
+        const bool available = client.GetDataDescriptionList(&descriptions) == ErrorCode_OK && descriptions;
+        std::unique_ptr<sDataDescriptions, decltype(&NatNet_FreeDescriptions)> ownedDescriptions(descriptions, &NatNet_FreeDescriptions);
+        int picoID = g_picoRigidBodyID.load();
+        if (available)
+        {
+            picoID = -1;
+            for (int i = 0; i < descriptions->nDataDescriptions; ++i)
+            {
+                const auto& d = descriptions->arrDataDescriptions[i];
+                if (d.type == Descriptor_RigidBody && d.Data.RigidBodyDescription &&
+                    std::string(d.Data.RigidBodyDescription->szName) == kPicoRigidBodyName)
+                    picoID = d.Data.RigidBodyDescription->ID;
+            }
+        }
+        g_picoRigidBodyID.store(picoID);
+        std::ostringstream out; out.imbue(std::locale::classic());
+        out << "{\"server_address\":"; mocap_recording::text(out, kServerAddress);
+        out << ",\"server_application\":"; mocap_recording::text(out, server.szHostApp);
+        out << ",\"motive_version\":";
+        mocap_recording::array(out, 4, [&](int i) { out << int(server.HostAppVersion[i]); });
+        out << ",\"natnet_version\":";
+        mocap_recording::array(out, 4, [&](int i) { out << int(server.NatNetVersion[i]); });
+        out << ",\"host_clock_frequency\":" << server.HighResClockFrequency
+            << ",\"frame_rate\":" << frameRate << ",\"pico_name\":\"Pico\",\"pico_id\":" << g_picoRigidBodyID.load()
+            << ",\"models_available\":" << (available ? "true" : "false")
+            << ",\"models\":" << (available ? mocap_recording::describeModels(*descriptions) : "[]") << '}';
+        return out.str();
     }
 
 } // namespace
@@ -946,12 +925,12 @@ int main(
     int argc,
     char *argv[])
 {
-    if (argc != 2)
+    if (argc < 2 || argc > 3)
     {
         std::cerr
             << "Usage:\n  "
             << argv[0]
-            << " <client-local-ip>\n\n"
+            << " <client-local-ip> [recording-directory]\n\n"
             << "Example:\n  "
             << argv[0]
             << " 192.168.0.237\n";
@@ -1072,7 +1051,9 @@ int main(
             << "rigid body can be found.\n";
     }
 
-    queryMotiveFrameRate(client);
+    const float frameRate = queryMotiveFrameRate(client);
+
+    g_serverClockFrequency.store(serverDescription.HighResClockFrequency, std::memory_order_relaxed);
 
     if (!initializeUnityUdp())
     {
@@ -1089,6 +1070,14 @@ int main(
             << '\n';
     }
 
+    const auto recordingRoot = argc == 3 ? std::filesystem::path(argv[2]) :
+        std::filesystem::absolute(argv[0]).parent_path() / "recordings";
+    if (!g_recorder.initialize(recordingRoot, "{}", 5011, 32,
+            [&] { return recordingMetadata(client, serverDescription, frameRate); }))
+        std::cerr << "Recording control unavailable: cannot bind localhost UDP 5011.\n";
+    else
+        std::cout << "Recording control: localhost UDP 5011 | output: " << recordingRoot.u8string() << '\n';
+
     std::cout
         << "\nMovement-filter settings:"
         << "\n  Activation distance: "
@@ -1097,7 +1086,9 @@ int main(
         << "\n  Association distance: "
         << kMaximumAssociationDistanceMeters
         << " m"
-        << "\n  Disappeared markers: removed immediately"
+        << "\n  Disappeared tracks: retained for 20 frames"
+        << "\n  Diagnostics: one summary per second; no console I/O in the frame callback"
+        << "\n  Timing values of -1 mean unavailable"
         << "\n\nReceiving frames."
         << "\nPress Ctrl+C to stop.\n\n";
 
@@ -1141,7 +1132,15 @@ int main(
             << " Hz"
             << " | Missing frame IDs: "
             << missingFrames
-            << '\n';
+            << " | frame " << g_lastFrameNumber.load(std::memory_order_relaxed)
+            << " | points raw/active " << g_rawPointCount.load(std::memory_order_relaxed)
+            << '/' << g_activePointCount.load(std::memory_order_relaxed)
+            << " | callback max " << g_maximumCallbackMilliseconds.exchange(0, std::memory_order_relaxed) << " ms"
+            << " | Motive software " << g_softwareMilliseconds.load(std::memory_order_relaxed) << " ms"
+            << " | transit/queue " << g_transitMilliseconds.load(std::memory_order_relaxed) << " ms"
+            << " | camera age " << g_cameraAgeMilliseconds.load(std::memory_order_relaxed) << " ms"
+            << " | send errors " << g_sendErrors.exchange(0, std::memory_order_relaxed)
+            << std::endl; // Flush only on this summary thread, never in the callback.
 
         previousRateTime = now;
     }
@@ -1150,6 +1149,7 @@ int main(
         << "\nDisconnecting...\n";
 
     client.Disconnect();
+    g_recorder.shutdown();
     shutdownUnityUdp();
 
     return EXIT_SUCCESS;

@@ -3,9 +3,13 @@
 [Tt]emp/
 [Oo]bj/
 [Bb]uild/
+build-msvc/
 [Ll]ogs/
 [Uu]serSettings/
 *.csproj
 *.sln
 *.user
 .vs/
+
+# Local motion-capture takes
+recordings/

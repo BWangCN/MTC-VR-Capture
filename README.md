@@ -43,3 +43,15 @@ Unity `Library/`, `Temp/`, `obj/`, `Logs/`, `UserSettings/`, `*.csproj`, `*.sln`
    over WiFi (see `ALVR_Streaming/SETUP_WIFI.md`).
 4. Open `VR_G1_RealTime_PC` in Unity for the real-time G1 / real-env streaming app; see the
    runbooks in that folder.
+
+## Imported obstacle course
+
+The 7b6477cb95 seed 0 obstacle course is available as a separate Unity environment.
+See [the obstacle-course runbook](VR_G1_RealTime_PC/OBSTACLE_COURSE_RUNBOOK.md) for
+opening, rebuilding, coordinate conventions, and source research-use restrictions.
+
+## Headset-controlled mocap recording
+
+The right controller's **A button** starts/stops native Motive-client recording,
+including unfiltered marker clouds and the synchronized `Pico` rigid-body pose.
+See [recording setup and file format](Motive_Client/README.md#recording-from-the-headset).
