@@ -19,15 +19,17 @@ class CDPError(RuntimeError):
 
 
 class Chrome:
-    def __init__(self, width=1600, height=1000, chrome="google-chrome", timeout=60.0, profile=None):
+    def __init__(self, width=1600, height=1000, chrome="google-chrome", timeout=60.0, profile=None, angle="swiftshader"):
         self._own_profile = profile is None
         self.profile = profile or os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", ".chrome-profiles",
                                                f"p{os.getpid()}-{id(self):x}")
         os.makedirs(self.profile, exist_ok=True)
         to_r, to_w = os.pipe()          # we write commands, Chrome reads them on fd 3
         from_r, from_w = os.pipe()      # Chrome writes on fd 4, we read
-        args = [chrome, "--headless=new", "--no-sandbox", "--remote-debugging-pipe", "--enable-unsafe-swiftshader",
-                "--use-angle=swiftshader", "--hide-scrollbars", "--mute-audio", "--no-first-run",
+        gl = (["--enable-unsafe-swiftshader", "--use-angle=swiftshader"] if angle == "swiftshader" else
+              [f"--use-angle={angle}", "--ignore-gpu-blocklist", "--enable-gpu"] + (["--enable-features=Vulkan"] if angle == "vulkan" else []))
+        args = [chrome, "--headless=new", "--no-sandbox", "--remote-debugging-pipe", *gl,
+                "--hide-scrollbars", "--mute-audio", "--no-first-run",
                 "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
                 f"--window-size={width},{height}",
                 f"--user-data-dir={self.profile}", "about:blank"]

@@ -268,30 +268,30 @@ def estimate_alignment(take, logtake, pad_frames=5, iters=8):
     o_frame = np.array([o[1] for o in logtake.opti])
     f0, F = int(take.frame[0]), len(take.frame)
     win = []
-    for ln, cam, _ in logtake.xr:
+    for ln, cam, rot in logtake.xr:
         j = int(np.searchsorted(o_line, ln))
         lo = o_frame[j - 1] - f0 if j > 0 else 0
         hi = o_frame[j] - f0 if j < len(o_frame) else F - 1
         i0, i1 = max(0, lo - pad_frames), min(F - 1, hi + pad_frames)
         if i1 < i0 or not ok[i0:i1 + 1].any():
             continue
-        win.append((np.array(cam, float), i0, i1))
+        win.append((np.array(cam, float), i0, i1, rot))
     if not win:
         raise ValueError(f"{take.name}: no [XR Camera] line inside the take")
-    t = np.median([c - Q[(i0 + i1) // 2] for c, i0, i1 in win], 0)
+    t = np.median([c - Q[(i0 + i1) // 2] for c, i0, i1, _ in win], 0)
     for _ in range(iters):
         best = []
-        for c, i0, i1 in win:
+        for c, i0, i1, _ in win:
             d = np.linalg.norm(Q[i0:i1 + 1] + t - c, axis=1)
             d[~ok[i0:i1 + 1]] = np.inf
             best.append(i0 + int(np.argmin(d)))
-        t_new = np.median([c - Q[i] for (c, _, _), i in zip(win, best)], 0)
+        t_new = np.median([c - Q[i] for (c, _, _, _), i in zip(win, best)], 0)
         if np.allclose(t_new, t, atol=1e-5):
             break
         t = t_new
-    samples = [{"index": i, "frame": int(take.frame[i]), "window": (i0, i1), "cam": c,
+    samples = [{"index": i, "frame": int(take.frame[i]), "window": (i0, i1), "cam": c, "cam_euler_deg": rot,
                 "residual_m": float(np.linalg.norm(Q[i] + t - c)), "t_from_T": T[i, :, 3] + c}
-               for (c, i0, i1), i in zip(win, best)]
+               for (c, i0, i1, rot), i in zip(win, best)]
     scale = np.linalg.norm(M[:, :, 0], axis=1)      # every column of R_yaw * s * C has length s
     ex = M[:, :, 0] / scale[:, None]                 # where Motive +X points in Unity
     yaw = np.degrees(np.arctan2(ex[:, 0], ex[:, 2]))

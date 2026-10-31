@@ -94,6 +94,13 @@
     .stage { height: 58vh; }
   }
   @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+  /* ?capture=1 (video rendering): only the 3D stage, filling the window */
+  body.capture main > header, body.capture main > section:not(:nth-of-type(2)), body.capture #h-view,
+  body.capture .toolbar, body.capture .layers, body.capture .legend, body.capture .chartwrap, body.capture .views { display: none !important; }
+  body.capture main { max-width: none; padding: 0; }
+  body.capture .card { border: 0; border-radius: 0; }
+  body.capture .stage { position: fixed; inset: 0; height: 100%; min-height: 0; }
+  body.capture .hud { font-size: 15px; }
 </style>
 </head>
 <body>
@@ -212,6 +219,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const META = JSON.parse(document.getElementById('meta').textContent);
 const qs = new URLSearchParams(location.search);
+if (qs.get('capture')) document.body.classList.add('capture');
 const TYPES = { int16: Int16Array, float32: Float32Array, uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array };
 async function loadBlob(spec) {
   // data files are JSON {gz64: base64(gzip(bytes))}; arrays marked delta hold frame-to-frame differences

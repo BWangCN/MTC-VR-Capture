@@ -6,7 +6,8 @@
 Markers are mapped with mocaprec.estimate_alignment (Unity's own native->Unity transform from the take, the
 translation from the session's Editor.log) and converted to the scene's glTF frame. Positions are stored as int16
 millimetres. The page loads three.js from jsDelivr. The room is a ScanNet++ scan (research use only, not to be
-redistributed): keep the page local.
+redistributed): keep the page local. With --fits the SMPL-X fits are added as a reduced, posed body mesh per
+video frame (every --body-step frames), placed as VR showed the person (player scale, alignment).
 """
 import argparse
 import base64
@@ -131,8 +132,50 @@ METHOD = ("Markers are drawn where the VR app showed them. The native Motive pos
           "Unity applied (G1 headset height 1.30 m); the room is metric.")
 
 
-def build(root, env_path, out_dir, room_cell):
+def body_payload(take, al, fit_path, step, cache):
+    """SMPL-X fit of a take as a reduced mesh per video frame, in the scene glTF frame (VR placement and scale),
+    int16 mm, frame-delta coded, gzip + base64. None if the take has no fit."""
+    if not os.path.exists(fit_path):
+        return None
+    import gzip
+    import torch
+    import build_fit_site as bfs
+    import smplx_model as sm
+    if "bm" not in cache:
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        cache["bm"] = sm.SMPLX("neutral", dev)
+        cache["red"] = bfs.mesh_reduction(cache["bm"])
+    bm, (inv, faces, n_red) = cache["bm"], cache["red"]
+    fit = np.load(fit_path)
+    F = len(take.frame)
+    frames = np.arange(0, F, step)
+    dev = bm.device
+    P = torch.tensor(fit["poses"], device=dev)
+    tr = torch.tensor(fit["trans"], device=dev)
+    betas = torch.tensor(fit["betas"][None], device=dev)
+    inv_t = torch.tensor(inv, device=dev)
+    cnt = torch.bincount(inv_t, minlength=n_red).float()[None, :, None]
+    T = torch.tensor(bfs.course_transform(al, frames), device=dev)
+    out = []
+    with torch.no_grad():
+        for a in range(0, len(frames), 128):
+            fr = torch.tensor(frames[a:a + 128], device=dev)
+            v, _ = bm.forward_full(betas, sm.axis_angle_to_matrix(P[fr, :3]),
+                                   sm.axis_angle_to_matrix(P[fr, 3:66].reshape(-1, 21, 3)), tr[fr])
+            red = torch.zeros(len(fr), n_red, 3, device=dev).index_add_(1, inv_t, v) / cnt
+            Tk = T[a:a + 128]
+            out.append((torch.einsum("nij,nvj->nvi", Tk[:, :, :3], red) + Tk[:, None, :, 3]).cpu().numpy())
+    V = np.concatenate(out)
+    q = np.clip(np.round(V * 1000), -32767, 32767).astype(np.int32)
+    q[1:] = q[1:] - q[:-1]
+    data = base64.b64encode(gzip.compress(q.astype(np.int16).tobytes(), 9)).decode("ascii")
+    cache["faces"], cache["n_verts"] = faces, n_red
+    return {"step": int(step), "frames": int(len(frames)), "gz64": data}
+
+
+def build(root, env_path, out_dir, room_cell, fits_dir=None, body_step=4):
     env = se.load_environment(env_path, room_cell=room_cell)
+    cache = {}
     logs = mr.parse_editor_log(os.path.join(root, "Editor.log"))
     takes = []
     for p in mr.find_takes(root):
@@ -143,9 +186,16 @@ def build(root, env_path, out_dir, room_cell):
             continue
         al = mr.estimate_alignment(take, lt)
         takes.append(take_payload(take, lt, al))
+        if fits_dir:
+            body = body_payload(take, al, os.path.join(fits_dir, f"{take.name}.npz"), body_step, cache)
+            if body:
+                takes[-1]["body"] = body
         print(f"{take.name}: {len(take.frame)} frames, camera residual median {np.median(al.residuals) * 100:.1f} cm")
     payload = {"env": env_payload(env), "takes": takes, "marker_radius_display_m": MARKER_RADIUS_DISPLAY_M,
                "method": METHOD, "built": datetime.datetime.now().isoformat(timespec="seconds")}
+    if "faces" in cache:
+        payload["body_faces"] = b64(cache["faces"].astype(np.uint16))
+        payload["body_n_verts"] = int(cache["n_verts"])
     with open(os.path.join(HERE, "viewer_template.html")) as f:
         html = f.read()
     os.makedirs(out_dir, exist_ok=True)
@@ -162,8 +212,10 @@ def main(argv=None):
     ap.add_argument("--env", default=se.DEFAULT_ENV)
     ap.add_argument("--out", default=os.path.join(HERE, "data", "out", "viewer"))
     ap.add_argument("--room-cell", type=float, default=0.025, help="room decimation grid (m)")
+    ap.add_argument("--fits", default=None, help="folder with fit_smplx.py results: adds the SMPL-X body")
+    ap.add_argument("--body-step", type=int, default=4, help="body mesh every N frames of the 100 Hz take")
     a = ap.parse_args(argv)
-    build(a.root, a.env, a.out, a.room_cell)
+    build(a.root, a.env, a.out, a.room_cell, a.fits, a.body_step)
     return 0
 
 

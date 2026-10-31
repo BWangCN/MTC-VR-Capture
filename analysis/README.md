@@ -148,3 +148,24 @@ ScanNet++ room; the `--with-room` copy is for local use only.
   (2.2 mm). Body heights agree within 3 cm across the walks.
 - Website: published privately at https://claude.ai/artifact/XvqQfY8Nbm2NzBStR5Bqnw (no room scan);
   `data/out/site_local/` is the same page with the room, for local use only.
+
+## SMPL-X videos with the full environment, and the first-person 3DGS view
+
+```bash
+# viewer with the SMPL-X body (reduced mesh every 2nd frame = 50 fps), then 1080p50 videos on the GPU
+PYTHONNOUSERSITE=1 $PY analysis/build_viewer.py $R --fits analysis/data/out/smplx --body-step 2 --out analysis/data/out/viewer_body
+PYTHONNOUSERSITE=1 $PY analysis/render_videos.py --viewer analysis/data/out/viewer_body/mocap_scene_viewer.html \
+    --out analysis/data/out/fit_videos --size 1920x1080 --fps 50 --query hide=cam --angle vulkan --quality 95 --crf 18 --suffix _smplx_main
+# first-person 3DGS (needs analysis/data/3dgs/ckpt_final.pt + manifest.json from the MTC_Next scene package
+# 7b6477cb95_test_only, primary 3dgs_meshdepth_w0.3), then picture-in-picture
+PYTHONNOUSERSITE=1 CUDA_HOME=/usr/local/cuda-12.9 analysis/data/venv-gsplat/bin/python analysis/fpv_3dgs.py $R
+$PY analysis/compose_pip.py                                               # -> data/out/pip/
+```
+
+- Headless Chrome renders WebGL on the RTX 5090 with `--angle vulkan` (0.05 s per 1080p frame, about 15x faster
+  than SwiftShader).
+- `venv-gsplat` (git-ignored, in `analysis/data/`): the `soma` env's Python with `--system-site-packages` plus
+  `gsplat==1.5.3`; its CUDA kernels build on first use with CUDA 12.9 (about 40 s).
+- First-person camera: the Pico rigid body as Unity placed it (VR scale, eye at about 1.30 m), front = rigid body
+  +X, up = +Z. Its forward matches the camera rotation Unity logged to a median of 1.9-3.8 deg per take.
+  Course objects and route markers are rasterised with PyTorch3D and composited by depth over the 3DGS.

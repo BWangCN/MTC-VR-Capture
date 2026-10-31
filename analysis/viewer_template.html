@@ -52,6 +52,8 @@
   <label><input type="checkbox" id="t_cam" checked> <span class="sw" style="background:#ffe14d"></span>Unity camera, from Editor.log</label>
   <label><input type="checkbox" id="t_idcol"> Colour unlabeled by Motive trajectory id</label>
   <label><input type="checkbox" id="t_big"> Enlarge markers (x2.5)</label>
+  <label><input type="checkbox" id="t_body" checked> SMPL-X body (fit)</label>
+  <label><input type="checkbox" id="t_glass"> See-through body</label>
   <label>Cut room above <input type="range" id="cut" min="0.5" max="3.4" step="0.05" value="2.3"> <span id="cutv"></span></label>
   <h3>This take</h3>
   <div class="kv" id="info"></div>
@@ -89,6 +91,9 @@ renderer.localClippingEnabled = true;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x15171a);
 const camera = new THREE.PerspectiveCamera(45, 1, 0.02, 100);
+// lights only shade the SMPL-X body; the room and objects stay unlit (vertex colours, as in VR)
+scene.add(new THREE.HemisphereLight(0xf4f6fa, 0x3c4048, 3.0));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(1.5, 4, 2.5); scene.add(sun);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = false;
 function resize() {
@@ -135,8 +140,41 @@ const COL = { unl: new THREE.Color(0xff8c1a), crop: new THREE.Color(0x8a8a8a) };
 let unlMesh, cropMesh, picoMesh, v4w2Mesh, headMesh, pathLine, camGroup;
 const tmpM = new THREE.Matrix4(), tmpV = new THREE.Vector3(), tmpS = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), tmpC = new THREE.Color();
 
+// ---------------------------------------------------------------- SMPL-X body (optional)
+const bodyGeom = new THREE.BufferGeometry();
+const bodyMat = new THREE.MeshStandardMaterial({ color: 0xcfd8e4, roughness: 0.5, metalness: 0.0, transparent: true, opacity: 1 });
+const bodyMesh = new THREE.Mesh(bodyGeom, bodyMat); bodyMesh.frustumCulled = false; scene.add(bodyMesh);
+if (P.body_faces) {
+  bodyGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(P.body_n_verts * 3), 3));
+  bodyGeom.setIndex(new THREE.BufferAttribute(b64(P.body_faces, Uint16Array), 1));
+}
+async function gunzipB64(s) {
+  const bin = atob(s), u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+}
+async function decodeBodies() {
+  for (const t of P.takes) {
+    if (!t.body) continue;
+    const a = new Int16Array(await gunzipB64(t.body.gz64)), stride = P.body_n_verts * 3;
+    for (let i = stride; i < a.length; i++) a[i] += a[i - stride];                // frame deltas -> positions
+    t._body = a; delete t.body.gz64;
+  }
+}
+function setBody() {
+  const B = T && T._body;
+  bodyMesh.visible = !!B && document.getElementById('t_body').checked;
+  if (!B) return;
+  const nV = P.body_n_verts, kb = Math.min(T.body.frames - 1, Math.round(cur / T.body.step));
+  const pos = bodyGeom.attributes.position.array, base = kb * nV * 3;
+  for (let i = 0; i < nV * 3; i++) pos[i] = B[base + i] / 1000;
+  bodyGeom.attributes.position.needsUpdate = true; bodyGeom.computeVertexNormals();
+  const glass = document.getElementById('t_glass').checked;
+  bodyMat.opacity = glass ? 0.4 : 1; bodyMat.depthWrite = !glass;
+}
+
 let T = null, cur = 0, playing = false, speed = 1, lastTs = null, view = 'top';
-const takes = P.takes.map(t => ({ ...t, _dec: null }));
+const takes = P.takes;                                    // _body (decoded SMPL-X meshes) is attached by decodeBodies
 function decode(t) {
   if (t._dec) return t._dec;
   const n = b64(t.n, Uint16Array), off = new Uint32Array(n.length + 1);
@@ -193,12 +231,14 @@ function setFrame(i) {
   }
   const h = d.head;
   if (h[3 * cur] !== MISSING) headMesh.position.set(h[3 * cur] / 1000, h[3 * cur + 1] / 1000, h[3 * cur + 2] / 1000);
+  setBody();
   document.getElementById('slider').value = cur;
   const tsec = cur / T.fps;
   document.getElementById('flabel').textContent = `frame ${cur} / ${T.frames - 1}   t = ${tsec.toFixed(2)} s`;
   const low = d.lowest[cur] === MISSING ? '–' : (d.lowest[cur] / 10).toFixed(1) + ' cm';
   document.getElementById('hud').textContent =
-    `${T.label}   t ${tsec.toFixed(2)} s   markers ${a} kept${b ? ', ' + b + ' dropped' : ''}   lowest marker ${low} above floor`;
+    `${T.label}   t ${tsec.toFixed(2)} s   markers ${a} kept${b ? ', ' + b + ' dropped' : ''}   lowest marker ${low} above floor` +
+    (T._body ? '   SMPL-X fit' : '');
   if (view === 'follow') follow();
 }
 
@@ -279,6 +319,7 @@ cur = f0; view = qs.get('view') || 'top';
 for (const k of (qs.get('hide') || '').split(',').filter(Boolean)) { const e = document.getElementById('t_' + k); if (e) e.checked = false; }
 for (const k of (qs.get('show') || '').split(',').filter(Boolean)) { const e = document.getElementById('t_' + k); if (e) e.checked = true; }
 if (qs.get('cut')) document.getElementById('cut').value = qs.get('cut');
+await decodeBodies();
 sel.value = t0; setTake(t0);
 if (qs.get('cam')) { const c = qs.get('cam').split(',').map(Number); camera.position.set(c[0], c[1], c[2]); controls.target.set(c[3], c[4], c[5]); camera.up.set(0, 1, 0); controls.update(); view = 'free'; }
 render();
