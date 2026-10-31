@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Obstacle Course SMPL-X Fits</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* one visual world: graphite studio around a 3D viewport; amber for controls, data colours from the capture
+       (orange markers, cyan headset). Layout: summary table -> viewer + residual chart -> notes */
+    --bg: #12151a;
+    --panel: #191d24;
+    --line: #2b313a;
+    --fg: #e7eaef;
+    --muted: #9aa3ae;
+    --accent: #f0a63a;
+    --good: #57c08b;
+    --warn: #e3b448;
+    --bad: #e4675f;
+    --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+    --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 var(--body); }
+  main { max-width: 1240px; margin: 0 auto; padding: 24px 20px 48px; display: grid; gap: 22px; }
+  h1, h2 { font-family: var(--display); font-weight: 600; text-wrap: balance; margin: 0; letter-spacing: .01em; }
+  h1 { font-size: 30px; line-height: 1.15; }
+  h2 { font-size: 18px; color: var(--fg); }
+  .sub { color: var(--muted); margin: 6px 0 0; max-width: 72ch; }
+  .num, td.n, .hud, .tick { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  section { display: grid; gap: 10px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+
+  /* takes table */
+  .tablewrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 760px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 12.5px; }
+  td.n, th.n { text-align: right; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td { background: #1f242c; }
+  tbody tr.sel td { background: #262b33; }
+  tbody tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; border: 1px solid; }
+  .chip.good { color: var(--good); border-color: color-mix(in srgb, var(--good) 45%, transparent); }
+  .chip.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .chip.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .takename { font-family: var(--mono); font-size: 13px; }
+
+  /* viewer */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  button, select { font: 500 13.5px var(--body); color: var(--fg); background: #232831; border: 1px solid #39404b; border-radius: 6px; padding: 5px 11px; cursor: pointer; }
+  button:hover, select:hover { border-color: #56606d; }
+  button:focus-visible, select:focus-visible, input:focus-visible, tr:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.primary { background: var(--accent); color: #1b1408; border-color: var(--accent); min-width: 72px; }
+  button[aria-pressed="true"] { background: #39404b; border-color: #6a7482; }
+  .seg { display: inline-flex; }
+  .seg button { border-radius: 0; margin-left: -1px; }
+  .seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+  .seg button:last-child { border-radius: 0 6px 6px 0; }
+  #scrub { flex: 1 1 220px; accent-color: var(--accent); min-width: 160px; }
+  #time { color: var(--muted); font-size: 13px; min-width: 120px; }
+  .stage { position: relative; height: min(62vh, 620px); min-height: 360px; background: #161a20; }
+  #c { width: 100%; height: 100%; display: block; }
+  .hud { position: absolute; left: 12px; bottom: 10px; background: rgba(18,21,26,.82); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; font-size: 12.5px; color: var(--fg); max-width: calc(100% - 24px); }
+  .views { position: absolute; right: 10px; top: 10px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .views button { background: rgba(35,40,49,.9); font-size: 12.5px; padding: 4px 9px; }
+  .loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; background: rgba(22,26,32,.6); }
+  .layers { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 12px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--muted); }
+  .layers label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; color: var(--fg); }
+  .layers input { accent-color: var(--accent); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 12px 10px; font-size: 12.5px; color: var(--muted); }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+  .chartwrap { padding: 8px 12px 12px; border-top: 1px solid var(--line); }
+  .charthead { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12.5px; flex-wrap: wrap; }
+  #chart { width: 100%; height: 130px; display: block; cursor: pointer; }
+
+  /* notes */
+  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 14px; }
+  .notes .card { padding: 14px 16px; }
+  .notes p, .notes li { color: #c9cfd7; font-size: 14px; margin: 6px 0 0; max-width: 65ch; }
+  .notes ul { margin: 6px 0 0; padding-left: 18px; }
+  code { font-family: var(--mono); font-size: 12.5px; color: #d9dee5; }
+  .foot { color: var(--muted); font-size: 12.5px; }
+  @media (max-width: 640px) {
+    main { padding: 16px 16px 40px; }
+    h1 { font-size: 24px; }
+    .stage { height: 58vh; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Obstacle Course SMPL-X Fits</h1>
+    <p class="sub" id="subline">SMPL-X bodies fitted to the 2026-10-30 OptiTrack takes from the VR obstacle course, shown with the markers they were fitted to.</p>
+  </header>
+
+  <section aria-labelledby="h-takes">
+    <h2 id="h-takes">Takes</h2>
+    <div class="card tablewrap">
+      <table>
+        <thead><tr>
+          <th>Take</th><th class="n">Length</th><th>Fit</th><th class="n">Marker residual, median / p95</th>
+          <th class="n">Headset</th><th class="n">Markers</th><th class="n">Body height</th><th class="n">Body into obstacles</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-view">
+    <h2 id="h-view">Body, markers and course</h2>
+    <div class="card">
+      <div class="toolbar">
+        <button id="play" class="primary" type="button">Play</button>
+        <select id="speed" aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option></select>
+        <input id="scrub" type="range" min="0" max="1" step="1" value="0" aria-label="Frame">
+        <span id="time" class="num"></span>
+        <span class="seg" role="group" aria-label="Placement">
+          <button id="m-course" type="button" aria-pressed="true">In the course (VR scale)</button>
+          <button id="m-true" type="button" aria-pressed="false">True size</button>
+        </span>
+      </div>
+      <div class="stage">
+        <canvas id="c"></canvas>
+        <div class="views" role="group" aria-label="Camera">
+          <button type="button" data-view="follow">Follow</button>
+          <button type="button" data-view="top">Top</button>
+          <button type="button" data-view="side">Side</button>
+          <button type="button" data-view="walk">Walk gate</button>
+          <button type="button" data-view="squeeze">Squeeze gate</button>
+        </div>
+        <div class="hud" id="hud"></div>
+        <div class="loading" id="loading">Loading…</div>
+      </div>
+      <div class="layers">
+        <label><input type="checkbox" id="l-body" checked> Body mesh</label>
+        <label><input type="checkbox" id="l-glass"> See-through body</label>
+        <label><input type="checkbox" id="l-obs" checked> Markers</label>
+        <label><input type="checkbox" id="l-anc"> Model markers</label>
+        <label><input type="checkbox" id="l-lines" checked> Residual lines</label>
+        <label><input type="checkbox" id="l-env" checked> Course objects</label>
+        <label><input type="checkbox" id="l-route" checked> Route</label>
+        <label id="room-l" hidden><input type="checkbox" id="l-room" checked> Room scan</label>
+      </div>
+      <div class="legend">
+        <span><span class="sw" style="background:#5fd39a"></span>marker within 5 mm of the body model</span>
+        <span><span class="sw" style="background:#f0b13c"></span>5–15 mm</span>
+        <span><span class="sw" style="background:#ef5d55"></span>over 15 mm</span>
+        <span><span class="sw" style="background:#8b939e"></span>not used by the fit</span>
+        <span><span class="sw" style="background:#22d3ee"></span>headset markers</span>
+      </div>
+      <div class="chartwrap">
+        <div class="charthead"><span>Median marker residual per frame (mm). Click to jump.</span><span id="chartnote" class="num"></span></div>
+        <canvas id="chart" aria-label="Median marker residual over time"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-notes">
+    <h2 id="h-notes">How these fits were made</h2>
+    <div class="notes">
+      <div class="card">
+        <h2>Fit</h2>
+        <ul>
+          <li>No marker names were needed. A start pose was fitted in the quietest half second of each take, with every point about 9 mm off the skin. Each marker was then anchored to its nearest vertex, and the 4 headset markers to the head.</li>
+          <li>Frame by frame, observed points were matched to the predicted anchors, and the pose was updated from the previous frame. All frames were then refined together with temporal smoothing.</li>
+          <li>Anchors were re-checked against each marker's own motion. A left-hand marker that hung next to the hip in the start pose moved from the hip to the hand this way.</li>
+          <li>Body shape and marker offsets were re-estimated over all frames, then the final fit was run.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h2>Placement and scale</h2>
+        <p>The fit is true size, in metres. In the course view the body stands where VR showed it: same alignment and the same player scale Unity applied (<span class="num">×0.877</span> for the first two takes, <span class="num">×0.823</span> for the rest, headset at 1.30 m). “True size” shows the body unscaled on the lab floor.</p>
+        <p>“Body into obstacles” is how deep the reduced body mesh reaches into the gates and objects at that placement.</p>
+      </div>
+      <div class="card">
+        <h2>Limits</h2>
+        <ul>
+          <li>SMPL-X neutral with 16 shape coefficients and a VPoser pose prior. Hands are flat and the face is neutral, since there are no finger or face markers.</li>
+          <li>Residuals measure agreement with the markers, not anatomical accuracy. There is no ground truth.</li>
+          <li>The 43 body markers are anonymous anchors, numbered per take.</li>
+          <li>The ScanNet++ room is not on this page because it may not be redistributed. The course objects, gates and route are.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h2>Sources</h2>
+        <p>Course objects: Google Scanned Objects (CC BY 4.0) and Amazon Berkeley Objects (CC BY-NC 4.0). Body: SMPL-X; only posed, reduced meshes are included, not the model.</p>
+        <p>Code: branch <code>mocap-analysis</code> of MTC-VR-Capture, <code>analysis/fit_smplx.py</code>. Fits: <code>analysis/data/out/smplx/</code>.</p>
+        <p class="foot" id="built"></p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script id="meta" type="application/json">/*META*/</script>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const META = JSON.parse(document.getElementById('meta').textContent);
+const qs = new URLSearchParams(location.search);
+const TYPES = { int16: Int16Array, float32: Float32Array, uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array };
+async function loadBlob(spec) {
+  // data files are JSON {gz64: base64(gzip(bytes))}; arrays marked delta hold frame-to-frame differences
+  const r = await fetch(spec.file);
+  if (!r.ok) throw new Error(`${spec.file}: ${r.status}`);
+  const s = atob((await r.json()).gz64), u8 = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+  const buf = await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  const out = {};
+  for (const [k, v] of Object.entries(spec.index)) {
+    const a = new TYPES[v.dtype](buf, v.offset, v.shape.reduce((x, y) => x * y, 1));
+    if (v.delta) for (let i = v.delta; i < a.length; i++) a[i] += a[i - v.delta];
+    out[k] = a;
+  }
+  return out;
+}
+const $ = id => document.getElementById(id);
+const fmt = (x, d = 1) => (x === null || x === undefined || Number.isNaN(x)) ? '–' : x.toFixed(d);
+
+// ------------------------------------------------------------ takes table
+const takes = META.takes;
+function grade(r) { return r.residual_mm.median <= 5 ? ['good', 'Good'] : r.residual_mm.median <= 8 ? ['warn', 'Check'] : ['bad', 'Poor']; }
+takes.forEach((t, i) => {
+  const r = t.report, [g, gl] = grade(r);
+  const tr = document.createElement('tr');
+  tr.tabIndex = 0; tr.dataset.i = i;
+  tr.innerHTML = `<td class="takename">${t.label}</td><td class="n">${t.duration_s.toFixed(1)} s</td>
+    <td><span class="chip ${g}">${gl}</span></td>
+    <td class="n">${fmt(r.residual_mm.median)} / ${fmt(r.residual_mm.p95)} mm</td>
+    <td class="n">${fmt(r.headset_residual_mm.median)} mm</td>
+    <td class="n">${r.markers_attached}${r.re_anchored.length ? ` <span title="re-anchored after checking motion">(${r.re_anchored.length} moved)</span>` : ''}</td>
+    <td class="n">${r.stature_m.toFixed(2)} m</td>
+    <td class="n">${t.max_depth_mm < 5 ? '<span class="chip good">none</span>' : fmt(t.max_depth_mm, 0) + ' mm'}</td>`;
+  tr.onclick = () => selectTake(i);
+  tr.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectTake(i); } };
+  $('rows').appendChild(tr);
+});
+$('subline').textContent = `SMPL-X bodies fitted to ${takes.length} OptiTrack takes from the VR obstacle course (2026-10-30), each from 43 unlabeled body markers plus the 4 headset markers, shown with the markers they were fitted to.`;
+$('built').textContent = `Built ${META.built}. Body mesh reduced to ${META.faces.n_verts} vertices; ${takes[0] ? takes[0].fps : 25} frames per second shown.`;
+
+// ------------------------------------------------------------ three.js scene
+const canvas = $('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;          // scanned colours shown as stored
+renderer.localClippingEnabled = true;                             // the room scan is cut above 2.3 m (ceiling)
+const roomCut = new THREE.Plane(new THREE.Vector3(0, -1, 0), 2.3);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x161a20);
+const camera = new THREE.PerspectiveCamera(42, 1, 0.02, 80);
+const controls = new OrbitControls(camera, canvas);
+scene.add(new THREE.HemisphereLight(0xf2f4f8, 0x3a3f48, 3.2));
+const sun = new THREE.DirectionalLight(0xffffff, 2.4); sun.position.set(2, 5, 3); scene.add(sun);
+function resize() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); render();
+}
+new ResizeObserver(resize).observe(canvas);
+
+const envGroup = new THREE.Group(), routeGroup = new THREE.Group(), roomGroup = new THREE.Group();
+scene.add(envGroup, routeGroup, roomGroup);
+const courseGrid = new THREE.GridHelper(10, 20, 0x3a414c, 0x262c35);
+scene.add(courseGrid);
+const trueGrid = new THREE.GridHelper(14, 28, 0x3a414c, 0x262c35); trueGrid.visible = false; scene.add(trueGrid);
+
+function addMesh(group, V, F, C, opts = {}) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(V, 3));
+  g.setIndex(new THREE.BufferAttribute(F, 1));
+  if (C) g.setAttribute('color', new THREE.BufferAttribute(C, 3, true));
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: !!C, side: THREE.DoubleSide, ...opts }));
+  group.add(m); return m;
+}
+let courseBox = new THREE.Box3(), courseC = new THREE.Vector3(2.2, 0, 2.8);
+async function loadEnv() {
+  const e = META.env, b = await loadBlob(e);
+  for (const p of e.parts) addMesh(p.kind === 'route' ? routeGroup : envGroup, b[p.name + '.V'], b[p.name + '.F'], b[p.name + '.C']);
+  const pts = e.route.flatMap(([x, y, z]) => [x, 0.01, z]);
+  const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  routeGroup.add(new THREE.Line(lg, new THREE.LineBasicMaterial({ color: 0xffcc19 })));
+  courseBox.setFromObject(envGroup).union(new THREE.Box3().setFromObject(routeGroup));
+  courseBox.getCenter(courseC); courseC.y = 0;
+  courseGrid.position.set(courseC.x, 0, courseC.z);
+  if (e.room) {
+    try {
+      const rb = await loadBlob(e.room);
+      addMesh(roomGroup, rb['room.V'], rb['room.F'], rb['room.C'], { clippingPlanes: [roomCut] });
+      $('room-l').hidden = false;
+    } catch (err) { /* room file is only present in a local copy */ }
+  }
+}
+
+// body + markers live in one group whose matrix is the per-frame placement
+const bodyGroup = new THREE.Group(); bodyGroup.matrixAutoUpdate = false; scene.add(bodyGroup);
+const bodyGeom = new THREE.BufferGeometry();
+const bodyMat = new THREE.MeshStandardMaterial({ color: 0xc9d4e2, roughness: 0.55, metalness: 0.0, transparent: true, opacity: 1 });
+const bodyMesh = new THREE.Mesh(bodyGeom, bodyMat); bodyGroup.add(bodyMesh);
+const sphere = new THREE.SphereGeometry(1, 12, 8);
+function inst(n, color) {
+  const m = new THREE.InstancedMesh(sphere, new THREE.MeshBasicMaterial({ color }), n);
+  m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.count = 0; m.frustumCulled = false; bodyGroup.add(m); return m;
+}
+const obsMesh = inst(80, 0xffffff), ancMesh = inst(64, 0xffffff);
+obsMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(80 * 3), 3);
+const lineGeom = new THREE.BufferGeometry();
+lineGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(64 * 6), 3));
+const lines = new THREE.LineSegments(lineGeom, new THREE.LineBasicMaterial({ color: 0xff7a66 })); lines.frustumCulled = false; bodyGroup.add(lines);
+const COL = { good: new THREE.Color(0x5fd39a), mid: new THREE.Color(0xf0b13c), bad: new THREE.Color(0xef5d55), off: new THREE.Color(0x8b939e), head: new THREE.Color(0x22d3ee) };
+
+let faces = null, cur = null, k = 0, mode = 'course', view = 'follow', playing = false, speed = 1;
+const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpS = new THREE.Vector3(), tmpV = new THREE.Vector3();
+
+async function selectTake(i) {
+  playing = false; $('play').textContent = 'Play';
+  document.querySelectorAll('#rows tr').forEach(tr => tr.classList.toggle('sel', +tr.dataset.i === i));
+  $('loading').hidden = false; $('loading').textContent = 'Loading ' + takes[i].label + '…';
+  const t = takes[i];
+  if (!t._data) t._data = await loadBlob({ file: t.file, index: t.index });
+  const d = t._data;
+  t._obsOff = new Uint32Array(t.frames + 1);
+  for (let f = 0; f < t.frames; f++) t._obsOff[f + 1] = t._obsOff[f] + d.obs_n[f];
+  cur = t;
+  const nV = META.faces.n_verts;
+  bodyGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(nV * 3), 3));
+  bodyGeom.setIndex(new THREE.BufferAttribute(faces, 1));
+  $('scrub').max = t.frames - 1;
+  $('loading').hidden = true;
+  const start = qs.get('frame') !== null ? +qs.get('frame') : (t.key_frames && t.key_frames.squeeze !== undefined ? t.key_frames.squeeze : Math.floor(t.frames / 2));
+  setFrame(start); setView(view);
+  drawChart();
+}
+
+function placement(f, out) {
+  if (mode === 'course') {
+    const c = cur._data.course, o = f * 12;
+    out.set(c[o], c[o + 1], c[o + 2], c[o + 3], c[o + 4], c[o + 5], c[o + 6], c[o + 7], c[o + 8], c[o + 9], c[o + 10], c[o + 11], 0, 0, 0, 1);
+  } else out.identity();
+  return out;
+}
+
+function setFrame(f) {
+  if (!cur) return;
+  k = Math.max(0, Math.min(cur.frames - 1, f | 0));
+  const d = cur._data, nV = META.faces.n_verts, M = cur.n_anchor + 4;
+  const pos = bodyGeom.attributes.position.array, base = k * nV * 3;
+  for (let i = 0; i < nV * 3; i++) pos[i] = d.mesh[base + i] / 1000;
+  bodyGeom.attributes.position.needsUpdate = true;
+  bodyGeom.computeVertexNormals(); bodyGeom.computeBoundingSphere();
+  placement(k, bodyGroup.matrix); bodyGroup.matrixWorldNeedsUpdate = true;
+  // markers: colour each observed point by the residual of the anchor it matched
+  const o0 = cur._obsOff[k], n = d.obs_n[k], colorOf = new Array(n).fill(null);
+  const scaleR = 0.013;                                         // marker sphere radius in the body's own (true-size) units
+  const lp = lineGeom.attributes.position.array; let nl = 0, na = 0;
+  for (let a = 0; a < M; a++) {
+    const j = d.match[k * M + a], r = d.resid[k * M + a];
+    const ax = d.anchors[(k * M + a) * 3] / 1000, ay = d.anchors[(k * M + a) * 3 + 1] / 1000, az = d.anchors[(k * M + a) * 3 + 2] / 1000;
+    tmpS.setScalar(scaleR * 0.55); tmpV.set(ax, ay, az); tmpM.compose(tmpV, tmpQ, tmpS); ancMesh.setMatrixAt(na++, tmpM);
+    if (j >= 0 && j < n) {
+      colorOf[j] = a >= cur.n_anchor ? COL.head : (r <= 5 ? COL.good : r <= 15 ? COL.mid : COL.bad);
+      const q = (o0 + j) * 3;
+      lp.set([ax, ay, az, d.obs[q] / 1000, d.obs[q + 1] / 1000, d.obs[q + 2] / 1000], nl * 6); nl++;
+    }
+  }
+  ancMesh.count = na; ancMesh.instanceMatrix.needsUpdate = true;
+  lineGeom.setDrawRange(0, nl * 2); lineGeom.attributes.position.needsUpdate = true;
+  for (let j = 0; j < n; j++) {
+    const q = (o0 + j) * 3;
+    tmpS.setScalar(scaleR); tmpV.set(d.obs[q] / 1000, d.obs[q + 1] / 1000, d.obs[q + 2] / 1000);
+    tmpM.compose(tmpV, tmpQ, tmpS); obsMesh.setMatrixAt(j, tmpM); obsMesh.setColorAt(j, colorOf[j] || COL.off);
+  }
+  obsMesh.count = n; obsMesh.instanceMatrix.needsUpdate = true; obsMesh.instanceColor.needsUpdate = true;
+  $('scrub').value = k;
+  const tsec = k / cur.fps;
+  $('time').textContent = `${tsec.toFixed(2)} / ${(cur.frames / cur.fps).toFixed(2)} s`;
+  const fr = Math.min(cur.median_resid_mm.length - 1, Math.round(k * cur.step));
+  const depth = d.depth_mm[k];
+  $('hud').textContent = `${cur.label}  ·  ${n} markers  ·  residual ${fmt(cur.median_resid_mm[fr])} mm` +
+    (mode === 'course' ? `  ·  body into obstacles ${depth > 4 ? depth + ' mm' : 'none'}` : '  ·  true size');
+  if (view === 'follow') follow(); else render();
+  drawCursor();
+}
+
+// ------------------------------------------------------------ camera
+function bodyCentre() {
+  bodyGeom.computeBoundingSphere();
+  return bodyGeom.boundingSphere.center.clone().applyMatrix4(bodyGroup.matrix);
+}
+let lastCentre = null;
+function follow() {
+  const c = bodyCentre();
+  if (lastCentre) { const dlt = c.clone().sub(lastCentre); camera.position.add(dlt); controls.target.add(dlt); }
+  lastCentre = c; controls.update(); render();
+}
+function sideOffset(c, dist, up) {
+  // look at the body from the course-centre side, so walls of the room scan stay behind the camera's target
+  const d = mode === 'course' ? new THREE.Vector3(courseC.x - c.x, 0, courseC.z - c.z) : new THREE.Vector3(-1, 0, 1);
+  if (d.length() < 0.3) d.set(-1, 0, 1);
+  return d.normalize().multiplyScalar(dist).add(new THREE.Vector3(0, up, 0));
+}
+function setView(v) {
+  view = v; lastCentre = null;
+  const c = bodyCentre();
+  if (v === 'follow') { camera.up.set(0, 1, 0); controls.target.copy(c); camera.position.copy(c).add(sideOffset(c, 2.3, 1.3)); lastCentre = c; }
+  else if (v === 'top') {
+    const ctr = mode === 'course' ? courseC : new THREE.Vector3(c.x, 0, c.z);
+    camera.up.set(1, 0, 0); controls.target.copy(ctr); camera.position.set(ctr.x, mode === 'course' ? 9 : 6, ctr.z + 0.001);
+  } else if (v === 'side') {
+    camera.up.set(0, 1, 0); controls.target.set(c.x, 0.8, c.z); camera.position.set(c.x - 4.2, 1.6, c.z + 0.6);
+  } else if (v === 'walk' || v === 'squeeze') {
+    const kf = cur.key_frames && cur.key_frames[v];
+    if (kf !== undefined) { setFrame(kf); }
+    const cc = bodyCentre(); camera.up.set(0, 1, 0);
+    controls.target.copy(cc); camera.position.copy(cc).add(sideOffset(cc, 1.7, 1.4)); view = 'follow'; lastCentre = cc;
+  }
+  controls.update(); render();
+}
+document.querySelectorAll('.views button').forEach(b => b.onclick = () => setView(b.dataset.view));
+controls.addEventListener('change', () => render());
+
+function setMode(m) {
+  mode = m; $('m-course').setAttribute('aria-pressed', m === 'course'); $('m-true').setAttribute('aria-pressed', m === 'true');
+  const inCourse = m === 'course';
+  envGroup.visible = inCourse && $('l-env').checked; routeGroup.visible = inCourse && $('l-route').checked;
+  roomGroup.visible = inCourse && $('l-room').checked; courseGrid.visible = inCourse;
+  trueGrid.visible = !inCourse;
+  if (!inCourse) { const c = bodyCentre(); trueGrid.position.set(Math.round(c.x), 0, Math.round(c.z)); }
+  setFrame(k); setView(view === 'top' ? 'top' : 'follow');
+}
+$('m-course').onclick = () => setMode('course');
+$('m-true').onclick = () => setMode('true');
+
+function applyLayers() {
+  bodyMesh.visible = $('l-body').checked;
+  bodyMat.opacity = $('l-glass').checked ? 0.35 : 1; bodyMat.depthWrite = !$('l-glass').checked;
+  obsMesh.visible = $('l-obs').checked; ancMesh.visible = $('l-anc').checked; lines.visible = $('l-lines').checked;
+  const inCourse = mode === 'course';
+  envGroup.visible = inCourse && $('l-env').checked; routeGroup.visible = inCourse && $('l-route').checked;
+  roomGroup.visible = inCourse && $('l-room').checked;
+  render();
+}
+document.querySelectorAll('.layers input').forEach(e => e.addEventListener('change', applyLayers));
+
+// ------------------------------------------------------------ playback
+$('play').onclick = () => { playing = !playing; $('play').textContent = playing ? 'Pause' : 'Play'; last = null; };
+$('speed').onchange = e => { speed = +e.target.value; };
+$('scrub').oninput = e => setFrame(+e.target.value);
+let last = null, acc = 0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (!playing || !cur) return;
+  if (last !== null) { acc += (ts - last) / 1000 * speed * cur.fps; const s = Math.floor(acc); if (s > 0) { acc -= s; setFrame((k + s) % cur.frames); } }
+  last = ts;
+}
+function render() { renderer.render(scene, camera); }
+
+// ------------------------------------------------------------ residual chart
+const chart = $('chart'), cx = chart.getContext('2d');
+let chartImg = null;
+function drawChart() {
+  const dpr = Math.min(window.devicePixelRatio, 2), W = chart.clientWidth, H = chart.clientHeight;
+  chart.width = W * dpr; chart.height = H * dpr; cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx.clearRect(0, 0, W, H);
+  const v = cur.median_resid_mm, n = v.length, padL = 34, padB = 18, padT = 6;
+  const finite = v.filter(x => x !== null);
+  const ymax = Math.max(10, Math.ceil(Math.max(...finite) / 5) * 5);
+  const X = i => padL + (W - padL - 6) * i / (n - 1), Y = y => padT + (H - padT - padB) * (1 - y / ymax);
+  cx.font = '11px "IBM Plex Mono", monospace'; cx.fillStyle = '#9aa3ae'; cx.strokeStyle = '#2b313a'; cx.lineWidth = 1;
+  for (let y = 0; y <= ymax; y += 5) { cx.beginPath(); cx.moveTo(padL, Y(y)); cx.lineTo(W - 6, Y(y)); cx.stroke(); cx.fillText(String(y), 4, Y(y) + 4); }
+  const dur = n / 100;
+  for (let s = 0; s <= dur; s += 5) { cx.fillText(s + ' s', X(s * 100) - 8, H - 3); }
+  cx.beginPath(); cx.moveTo(X(0), Y(0));
+  v.forEach((y, i) => cx.lineTo(X(i), Y(y === null ? 0 : Math.min(y, ymax))));
+  cx.lineTo(X(n - 1), Y(0)); cx.closePath(); cx.fillStyle = 'rgba(240,166,58,0.16)'; cx.fill();
+  cx.beginPath(); v.forEach((y, i) => { const p = [X(i), Y(y === null ? 0 : Math.min(y, ymax))]; i ? cx.lineTo(...p) : cx.moveTo(...p); });
+  cx.strokeStyle = '#f0a63a'; cx.lineWidth = 1.4; cx.stroke();
+  chartImg = cx.getImageData(0, 0, chart.width, chart.height);
+  const r = cur.report.residual_mm;
+  $('chartnote').textContent = `take median ${fmt(r.median)} mm · p95 ${fmt(r.p95)} mm`;
+  drawCursor();
+}
+function drawCursor() {
+  if (!chartImg || !cur) return;
+  cx.putImageData(chartImg, 0, 0);
+  const W = chart.clientWidth, H = chart.clientHeight, padL = 34, n = cur.median_resid_mm.length;
+  const x = padL + (W - padL - 6) * Math.min(1, (k * cur.step) / (n - 1));
+  cx.strokeStyle = '#e7eaef'; cx.lineWidth = 1; cx.beginPath(); cx.moveTo(x, 4); cx.lineTo(x, H - 16); cx.stroke();
+}
+chart.onclick = e => {
+  const rect = chart.getBoundingClientRect(), padL = 34;
+  const fr = (e.clientX - rect.left - padL) / (rect.width - padL - 6);
+  setFrame(Math.round(fr * (cur.frames - 1)));
+};
+new ResizeObserver(() => { if (cur) drawChart(); }).observe(chart);
+
+// ------------------------------------------------------------ start
+(async () => {
+  try {
+    const fb = await loadBlob(META.faces); faces = fb.faces;
+    await loadEnv();
+    const first = Math.max(0, takes.findIndex(t => t.key_frames && t.key_frames.squeeze !== undefined));
+    await selectTake(+(qs.get('take') ?? first));
+    window.viewer = { setFrame, setView, setMode, selectTake, ready: true };
+    document.body.dataset.ready = '1';
+  } catch (err) {
+    $('loading').hidden = false;
+    $('loading').textContent = 'Could not load the data files (' + err.message + '). Open the page from the published link or a local web server.';
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

@@ -91,3 +91,60 @@ not in the zip.
   `rb_obs` of `v4w2` back into the body markers; for new captures, deactivate the `v4w2` asset in Motive.
 - **Unlabeled markers**: 41-54 per frame, 288-510 distinct Motive trajectory ids per take (trajectories break
   often), so labeling cannot rely on Motive's ids alone.
+
+## SMPL-X fit (`fit_smplx.py`)
+
+```bash
+PYTHONNOUSERSITE=1 $PY analysis/fit_smplx.py $R [--takes NAME ...]     # -> data/out/smplx/<take>.npz/.json
+```
+
+Fits SMPL-X (neutral, 16 betas, VPoser v1 body pose, flat hands) to the **native, true-size** markers; the
+model files are read from `/data/Humanoid/Marker2SMPLX/body_models` (override `MTCVR_BODY_MODELS`) and never
+copied into this repository. No marker names are needed:
+
+1. Body points per frame = unlabeled markers within 0.9 m of the headset + the members Motive gave to `v4w2`;
+   the 4 headset markers are rigid points on the head joint.
+2. Start pose in the quietest upright 0.5 s (label-free: each point ~9 mm off the nearest skin vertex; facing
+   from the headset's +X axis, which points along the walking direction in every walk).
+3. Anchors: nearest vertex + rest-frame offset per point (MoSh style).
+4. Tracking frame by frame (Hungarian matching to predicted anchors, gated at 8 cm, Motive trajectory ids as a
+   tie-break), then a batch fit of all frames with temporal smoothing.
+5. Re-anchoring: each anchor's vertex is re-picked from the marker's own motion (most rigid near-surface vertex).
+   Needed because a still start pose cannot tell a hand hanging at the hip from a hip marker.
+6. Batch fit, betas + offsets re-estimated on all frames, final fit.
+
+Output `.npz`: AMASS-style `poses` (F, 165), `trans`, `betas`, `gender`, `mocap_framerate`, plus anchors,
+per-frame residuals and matches. Frame: native Motive turned Y up, `p = (x, z, -y)`, metres.
+
+## Website (`build_fit_site.py`)
+
+```bash
+PYTHONNOUSERSITE=1 $PY analysis/build_fit_site.py $R                    # data/out/site/ (no room scan)
+PYTHONNOUSERSITE=1 $PY analysis/build_fit_site.py $R --with-room --out analysis/data/out/site_local
+cd analysis/data/out/site_local && python3 -m http.server 8000           # then open http://localhost:8000
+```
+
+The page needs to be served over http (it fetches its data files). The published version leaves out the
+ScanNet++ room; the `--with-room` copy is for local use only.
+
+### Fit results, 2026-10-30 takes (run 2026-10-31)
+
+| Take | Marker residual median / p95 | Headset | Re-anchored | Body height | Body mesh into obstacles (VR scale) |
+|---|---|---|---|---|---|
+| `take_1793414086680206800` | 4.2 / 13.1 mm | 0.8 mm | 1 | 1.76 m | 24 mm |
+| `jumping` | 4.5 / 14.2 mm | 1.0 mm | 1 | 1.79 m | none |
+| `take_1793415980024001300` | 3.6 / 10.8 mm | 1.2 mm | 1 | 1.76 m | 10 mm |
+| `take_1793416015722837300` | 3.8 / 11.4 mm | 0.7 mm | 2 | 1.77 m | 10 mm |
+| `take_1793416052198176000` | 3.7 / 10.8 mm | 0.7 mm | 2 | 1.76 m | 10 mm |
+| `take_1793416088017881100` | 4.4 / 12.0 mm | 1.0 mm | 1 | 1.79 m | 10 mm |
+
+- Every take: 43 body markers anchored. In each take one hand marker that hung next to the hip in the start pose
+  was first anchored on the pelvis and moved to the hand/forearm by the re-anchoring step.
+- Weak spots left: `…086` and `…015` have 2-3 anchors matched in only 12-25 % of frames (likely duplicate or
+  ghost points in the start frame) and 1-2 body points per frame without an anchor; `…052` has one anchor at
+  31.6 mm (matched 14 %). The right-hand marker in `…015` and `…052` ended on the forearm near the wrist.
+  Possible refinement: add anchors for persistent unmatched points, drop rarely matched ones, re-anchor twice.
+- The `jumping` start window had picked a crouch (96 mm start-pose RMS); windows now require an upright stance
+  (2.2 mm). Body heights agree within 3 cm across the walks.
+- Website: published privately at https://claude.ai/artifact/XvqQfY8Nbm2NzBStR5Bqnw (no room scan);
+  `data/out/site_local/` is the same page with the room, for local use only.
