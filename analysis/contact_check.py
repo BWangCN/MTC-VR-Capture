@@ -9,7 +9,8 @@ Obstacles are the collision proxies Unity used for contact feedback (collision.g
   (accurate to about half the spacing); floor triangles (normal up, below 5 cm) are left out, as in Unity. The
   scan's triangle normals are not consistently oriented, so inside/outside cannot be told for the scan.
 Contact = a marker centre within 2 cm, Unity's contactRadiusMeters in the course scene.
-Markers checked: unlabeled markers kept by the headset box, plus the Pico and v4w2 rigid-body markers.
+Markers checked: unlabeled markers kept by the headset box, plus the rigid-body members Motive actually saw
+(Pico, and the body markers Motive gave to the stray v4w2 rigid body).
 Reported per obstacle: closest approach and when, frames in contact; for hulls also frames with a marker centre
 inside / deeper than 2 cm inside.
 A marker centre sits about 1 cm off the skin, so a centre inside means the body overlapped the obstacle.
@@ -63,13 +64,10 @@ def item_names(env_path):
 def take_points(take, al):
     """(N, 3) glTF marker centres and their frame indices."""
     P, I = [], []
-    other = [i for i in take.rb if i != mr.PICO_RB_ID]
-    sets = [take.sets.get(take.rb_names[mr.PICO_RB_ID])] + [take.sets.get(take.rb_names[i]) for i in other]
     for i in range(len(take.frame)):
         pts = [take.unl_pos[i][take.unl_kept[i]]]
-        for S in sets:
-            if isinstance(S, np.ndarray):
-                pts.append(S[i][np.isfinite(S[i]).all(1)])
+        for O in take.rb_obs.values():               # observed rigid-body members only
+            pts.append(O[i][np.isfinite(O[i]).all(1)])
         p = np.concatenate(pts)
         if len(p):
             P.append(al.to_gltf(i, p))

@@ -75,3 +75,19 @@ Fitting a body must use the native, unscaled positions.
 
 Two short takes in the log (`take_1793414430330192100`, 189 frames; `take_1793414434033795300`, 309 frames) are
 not in the zip.
+
+## Findings on these takes
+
+- **Placement.** All five course walks start on the route start, follow the route through both gates and end on the
+  goal; `jumping` stays around the squeeze gate. Stills: `render_stills.py` -> `data/out/stills/`.
+- **Contacts** (`contact_check.py`, Unity's 2 cm contact radius, person at the VR scale): at the squeeze gate the
+  markers touch the panels for 1.1-2.0 s per walk and reach at most 0.55-0.98 cm inside them, never 2 cm; nothing
+  else is touched (cabinet, room scan, clutter).
+- **Rigid body `v4w2` is a false lock.** It is defined in Motive (8 markers, 39 cm long) but no such object is in
+  the capture: its pose jumps up to 1.3 m between 10 ms frames (46-102 jumps over 10 cm per take) and alternates
+  between floor height and about 1.2 m. Motive fits it to 3 (sometimes 4-5) body markers per frame, which are
+  then missing from the unlabeled markers. The NatNet marker set fills its other 5 members with expected
+  positions; `mocaprec.Take.rb_obs` keeps only the members Motive saw. For labeling and fitting, merge
+  `rb_obs` of `v4w2` back into the body markers; for new captures, deactivate the `v4w2` asset in Motive.
+- **Unlabeled markers**: 41-54 per frame, 288-510 distinct Motive trajectory ids per take (trajectories break
+  often), so labeling cannot rely on Motive's ids alone.

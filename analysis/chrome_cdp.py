@@ -1,13 +1,15 @@
 """Minimal Chrome DevTools Protocol client over --remote-debugging-pipe (standard library only).
 
 Used to screenshot the viewer page and to capture video frames from it. Chrome reads commands on fd 3 and writes
-replies and events on fd 4, each message a JSON object terminated by a NUL byte. WebGL runs on SwiftShader.
+replies and events on fd 4, each message a JSON object terminated by a NUL byte. WebGL runs on SwiftShader. Each
+Chrome gets its own throwaway profile folder (analysis/data/.chrome-profiles/, git-ignored), never the user's.
 """
 import base64
 import json
 import os
 import select
 import shlex
+import shutil
 import subprocess
 import time
 
@@ -17,13 +19,18 @@ class CDPError(RuntimeError):
 
 
 class Chrome:
-    def __init__(self, width=1600, height=1000, chrome="google-chrome", timeout=60.0):
+    def __init__(self, width=1600, height=1000, chrome="google-chrome", timeout=60.0, profile=None):
+        self._own_profile = profile is None
+        self.profile = profile or os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", ".chrome-profiles",
+                                               f"p{os.getpid()}-{id(self):x}")
+        os.makedirs(self.profile, exist_ok=True)
         to_r, to_w = os.pipe()          # we write commands, Chrome reads them on fd 3
         from_r, from_w = os.pipe()      # Chrome writes on fd 4, we read
         args = [chrome, "--headless=new", "--no-sandbox", "--remote-debugging-pipe", "--enable-unsafe-swiftshader",
                 "--use-angle=swiftshader", "--hide-scrollbars", "--mute-audio", "--no-first-run",
                 "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
-                f"--window-size={width},{height}", "about:blank"]
+                f"--window-size={width},{height}",
+                f"--user-data-dir={self.profile}", "about:blank"]
         cmd = "exec " + " ".join(shlex.quote(a) for a in args) + f" 3<&{to_r} 4>&{from_w}"
         self.proc = subprocess.Popen(["bash", "-c", cmd], pass_fds=(to_r, from_w),
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -117,6 +124,8 @@ class Chrome:
                 os.close(fd)
             except OSError:
                 pass
+        if self._own_profile:
+            shutil.rmtree(self.profile, ignore_errors=True)
 
     def __enter__(self):
         return self

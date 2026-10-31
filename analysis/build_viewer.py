@@ -83,14 +83,15 @@ def take_payload(take, lt, al):
             lowest[i] = g[kept, 1].min()
             low_true[i] = P[kept, 2].min()
     unl = np.concatenate(unl) if unl else np.zeros((0, 3))
-    pico_set = take.sets.get(take.rb_names[mr.PICO_RB_ID])
     other = [i for i in take.rb if i != mr.PICO_RB_ID]
-    v4_set = take.sets.get(take.rb_names[other[0]]) if other else None
 
-    def set_mm(S, k):
-        if S is None or not isinstance(S, np.ndarray):
-            return mm(np.full((F, k, 3), np.nan))
-        out = np.stack([al.to_gltf(i, S[i]) for i in range(F)])
+    def obs_mm(rid, k):
+        """Observed members of a rigid body, padded to k slots (NaN -> MISSING)."""
+        out = np.full((F, k, 3), np.nan)
+        if rid is not None:
+            O = take.rb_obs[rid]
+            n = min(k, O.shape[1])
+            out[:, :n] = np.stack([al.to_gltf(i, O[i, :n]) for i in range(F)])
         return mm(out)
 
     head = np.stack([al.to_gltf(i, take.rb[mr.PICO_RB_ID]["pos"][i]) for i in range(F)])
@@ -109,12 +110,14 @@ def take_payload(take, lt, al):
         "camera vs headset": f"median {np.median(res) * 100:.1f} cm, max {res.max() * 100:.1f} cm",
         "Unity's alignment error": f"median {np.median([o[3] for o in lt.opti]) * 100:.1f} cm",
         "Pico fit error": f"median {np.nanmedian(pico_err) * 1000:.2f} mm",
+        "taken by v4w2": (f"median {np.median(np.isfinite(take.rb_obs[other[0]]).all(2).sum(1)):.0f} body markers / frame"
+                          if other else "–"),
         "lowest marker (true)": f"median {np.nanmedian(low_true) * 100:.1f} cm over the lab floor",
     }
     return {"name": take.name, "label": take_label(take), "frames": F, "fps": 100, "info": info,
             "n": b64(n), "unl": b64(mm(unl)), "flags": b64(np.concatenate(flags) if flags else np.zeros(0, np.uint8)),
             "ids": b64(np.concatenate(ids) if ids else np.zeros(0, np.uint32)),
-            "pico": b64(set_mm(pico_set, 4)), "v4w2": b64(set_mm(v4_set, 8)), "head": b64(mm(head)),
+            "pico": b64(obs_mm(mr.PICO_RB_ID, 4)), "v4w2": b64(obs_mm(other[0] if other else None, 8)), "head": b64(mm(head)),
             "lowest": b64(np.where(np.isfinite(lowest), np.clip(np.round(lowest * 1000), -32767, 32767), MISSING).astype(np.int16)),
             "cams": [{"i": int(x["index"]), "p": mr.unity_to_gltf(x["cam"]).round(4).tolist(), "r": round(x["residual_m"], 4)}
                      for x in al.samples]}

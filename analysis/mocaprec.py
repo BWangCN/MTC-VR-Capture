@@ -42,7 +42,9 @@ class Take:
     unl_id: list                     # per frame: (n,) Motive trajectory ids of those markers
     unl_kept: list                   # per frame: (n,) bool, kept by the headset-box crop (all True when it was off)
     rb: dict                         # rigid-body id -> {"name", "pos" (F, 3), "quat_xyzw" (F, 4), "err" (F,)}; NaN = missing
-    sets: dict                       # marker-set name -> (F, n, 3) member markers, NaN = missing
+    rb_obs: dict                     # rigid-body id -> (F, n_members, 3): member markers Motive actually saw, NaN = not seen
+    sets: dict                       # marker-set name -> (F, n, 3): NatNet marker sets, which fill unseen rigid-body
+                                     # members with the model's expected position (do not use them as observations)
     T: np.ndarray                    # (F, 3, 4) native -> Unity headset-relative transform; NaN rows = invalid
     filt_on: np.ndarray              # (F,) bool, crop enabled
     rb_names: dict = field(default_factory=dict)
@@ -77,6 +79,8 @@ def load_take(path):
 
     frame, ts, unl_pos, unl_id = [], [], [], []
     rb = {i: {"name": n, "pos": [], "quat_xyzw": [], "err": []} for i, n in rb_names.items()}
+    n_members = {m["id"]: len(m["markers"]) for m in models if m["type"] == 1}
+    rb_obs = {i: [] for i in rb_names}
     sets = {n: [] for n in set_names}
     with open(os.path.join(path, "frames.jsonl")) as f:
         for line in f:
@@ -84,10 +88,15 @@ def load_take(path):
             frame.append(d["frame"])
             ts.append(d["timestamp"])
             ids, pos = [], []
+            obs = {i: np.full((n_members[i], 3), np.nan) for i in rb_obs}
             for m in d["labeled_markers"]:
                 if m["params"] & UNLABELED_FLAG:             # Motive trajectory ids pass 65535, so the id's
                     ids.append(m["id"])                      # high bits are not an asset id for these
                     pos.append(_vec(m["position"], 3))
+                elif m["id"] >> 16 in obs and 1 <= (m["id"] & 0xFFFF) <= n_members[m["id"] >> 16]:
+                    obs[m["id"] >> 16][(m["id"] & 0xFFFF) - 1] = _vec(m["position"], 3)   # member ids are 1-based
+            for i in rb_obs:
+                rb_obs[i].append(obs[i])
             unl_id.append(np.array(ids, np.int64))
             unl_pos.append(np.array(pos, float).reshape(-1, 3))
             seen = set()
@@ -129,8 +138,9 @@ def load_take(path):
             rb[i][k] = np.array(rb[i][k], float)
     ts = np.array(ts, float)
     return Take(os.path.basename(os.path.normpath(path)), path, meta, summary, np.array(frame, np.int64), ts - ts[0],
-                unl_pos, unl_id, unl_kept, rb, {n: np.stack(v) if v and len({x.shape for x in v}) == 1 else v
-                                                for n, v in sets.items()}, T, filt_on, rb_names)
+                unl_pos, unl_id, unl_kept, rb, {i: np.stack(v) for i, v in rb_obs.items()},
+                {n: np.stack(v) if v and len({x.shape for x in v}) == 1 else v for n, v in sets.items()},
+                T, filt_on, rb_names)
 
 
 def find_takes(root):
