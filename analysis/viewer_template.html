@@ -289,13 +289,18 @@ document.getElementById('method').textContent = P.method;
 // split mode (?split=1, used for the videos): left = main camera, right = fixed top view of the whole room
 const topCam = new THREE.PerspectiveCamera(32, 1, 0.5, 30);
 const split = !!qs.get('split');
+const splitW = +(qs.get('splitw') || 0.58);          // share of the width for the left (main camera) panel
 function placeTopCam(aspect) {
+  // from above, the room's x axis up the panel; height chosen so the whole room (plus 0.3 m) fits the panel
   topCam.aspect = aspect; topCam.up.set(1, 0, 0);
-  topCam.position.set(roomC.x, 11.5, roomC.z + 0.001); topCam.lookAt(roomC.x, 0, roomC.z); topCam.updateProjectionMatrix();
+  const t = Math.tan(THREE.MathUtils.degToRad(topCam.fov / 2));
+  const hv = (bbox.max.x - bbox.min.x) / 2 + 0.3, hh = (bbox.max.z - bbox.min.z) / 2 + 0.3;
+  const hgt = Math.max(hv / t, hh / (t * aspect)) + 2.5;
+  topCam.position.set(roomC.x, hgt, roomC.z + 0.001); topCam.lookAt(roomC.x, 0, roomC.z); topCam.updateProjectionMatrix();
 }
 function render() {
   if (!split) { renderer.render(scene, camera); return; }
-  const w = window.innerWidth, h = window.innerHeight, wl = Math.round(w * 0.58);
+  const w = window.innerWidth, h = window.innerHeight, wl = Math.round(w * splitW);
   renderer.setScissorTest(true);
   camera.aspect = wl / h; camera.updateProjectionMatrix();
   renderer.setViewport(0, 0, wl, h); renderer.setScissor(0, 0, wl, h); renderer.render(scene, camera);

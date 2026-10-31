@@ -180,3 +180,29 @@ $PY analysis/compose_pip.py                                               # -> d
   picture-in-picture videos in parallel (about 20 s).
 - 3DGS used: scene package `7b6477cb95_test_only`, primary `3dgs_meshdepth_w0.3/ckpt_final.pt`
   (SHA-256 `ee4d6e10…`, matches the manifest; 1,165,965 Gaussians, val PSNR 30.9), in `analysis/data/3dgs/`.
+
+## Triptych videos and the share package
+
+```bash
+PYTHONNOUSERSITE=1 $PY analysis/render_videos.py --viewer analysis/data/out/viewer_body/mocap_scene_viewer.html \
+    --out analysis/data/out/follow_top --size 2560x720 --fps 50 --query "hide=cam&splitw=0.5" --angle vulkan \
+    --quality 95 --crf 18 --suffix _follow_top
+$PY analysis/compose_triptych.py        # -> data/out/deliver/{triptych,third_person,top_view,first_person}/
+```
+
+Three equal 1280x720 panels (third person with the SMPL-X body | top view | first person 3DGS), 3840x720 at
+50 fps, plus each panel on its own. The top view fits the whole room to its panel (`placeTopCam`). Package for
+sharing (README inside, with the data licences): `data/out/mtc_vr_course_2026-10-30_smplx_triptych.zip`
+(180 MiB; too large for the chat's 30 MiB file limit, so it is collected from this machine).
+
+## Arm jumps in `jumping` (`check_fit_jumps.py`)
+
+The arm pose jumps (up to 8.7 deg per 10 ms frame) at about 4.0 s and 18.0-18.6 s on the right arm and 17.3-19 s
+on the left hand, exactly where arm markers drop out for 0.1-0.6 s during fast swings and a wrong point is
+matched when they come back (residual spikes of 50-64 mm; the stray `v4w2` also took a right upper-arm marker for
+3 frames). Underlying cause: sparse arm markers, 1-2 per upper arm and forearm and 0-3 near each wrist (right
+wrist inconsistent between takes), none on the backs of the hands. A segment needs 3 non-collinear markers to fix
+its rotation including the twist, so one dropout leaves it to the prior. Remedy: the MTC_Next layout v2 arm
+markers plus the light hand tier (wrist pair WristIn/WristOut, HandIn/HandOut), deactivate `v4w2`, 180-240 Hz for
+fast motion. Fitting-side mitigations (stricter re-matching after a gap, more smoothing during arm gaps, a neutral
+wrist prior without hand markers) would reduce but not remove the jumps.
