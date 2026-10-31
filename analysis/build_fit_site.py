@@ -10,8 +10,9 @@ from a local web server. --with-room also writes data/room.json (the ScanNet++ s
 redistributed): use it only for a local copy, never for a published one.
 
 Per take (sampled at --fps from 100 Hz):
-- mesh: SMPL-X posed with the fitted parameters, reduced by vertex clustering of the template (2.5 cm cells)
-  to about 3,000 vertices; int16 mm in the fit frame (native Motive turned Y up; true size);
+- mesh: SMPL-X posed with the fitted parameters and the MANO mean (relaxed) hand pose, reduced by vertex
+  clustering of the template (2 cm cells, hands kept at full resolution) to about 4,900 vertices; int16 mm in the
+  fit frame (native Motive turned Y up; true size);
 - course transform per frame (3x4, float32): fit frame -> scene glTF, i.e. Unity's mapping (player scale,
   alignment) followed by the x mirror, so the body stands where VR showed it;
 - observed markers (body points and the 4 headset markers), predicted anchors and per-anchor residuals (mm).
@@ -34,7 +35,7 @@ import smplx_model as sm  # noqa: E402
 from fit_smplx import TakeData, Z_UP_TO_Y_UP  # noqa: E402
 
 MISSING = -32768
-MESH_CELL_M = 0.025
+MESH_CELL_M = 0.02                    # body vertex clustering; hand vertices are kept one by one
 
 
 def mm16(P):
@@ -81,13 +82,18 @@ class Blob:
 
 
 def mesh_reduction(bm):
-    """Vertex clustering of the rest template: cluster id per vertex and faces of the reduced mesh."""
+    """Vertex clustering of the rest template (MESH_CELL_M cells), except hand vertices (skinned mostly by a wrist or
+    finger joint), which are kept one by one: clustering fingers thinner than a cell tears them apart.
+    Returns the cluster id per vertex, the faces of the reduced mesh and the number of reduced vertices."""
     V = bm.v_template.cpu().numpy()
     F = bm.faces
+    dom = bm.weights.argmax(-1).cpu().numpy()
+    hand = np.isin(dom, [20, 21] + list(range(25, 55)))
     key = np.floor(V / MESH_CELL_M).astype(np.int64)
     key -= key.min(0)
     dims = key.max(0) + 1
     lin = (key[:, 0] * dims[1] + key[:, 1]) * dims[2] + key[:, 2]
+    lin[hand] = lin.max() + 1 + np.arange(hand.sum())                 # unique key per hand vertex
     _, inv = np.unique(lin, return_inverse=True)
     Fn = inv[F]
     ok = (Fn[:, 0] != Fn[:, 1]) & (Fn[:, 1] != Fn[:, 2]) & (Fn[:, 0] != Fn[:, 2])
@@ -225,7 +231,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     os.makedirs(os.path.join(a.out, "data"), exist_ok=True)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    bm = sm.SMPLX("neutral", dev)
+    bm = sm.SMPLX("neutral", dev, hands="relaxed")                  # display: MANO mean hand pose
     red = mesh_reduction(bm)
     env = se.load_environment(a.env, room_cell=0.025)
     import contact_check as cc

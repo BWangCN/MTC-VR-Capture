@@ -16,6 +16,10 @@ import numpy as np
 import torch
 
 BODY_MODELS = os.environ.get("MTCVR_BODY_MODELS", "/data/Humanoid/Marker2SMPLX/body_models")
+# MANO mean ("relaxed") hand pose, read from an official SMPL-X v1.1 .npz (hands_meanl / hands_meanr); the files in
+# BODY_MODELS do not carry it. Used for display only: there are no finger markers, so the fit keeps hand pose 0.
+HANDS_MEAN_FILE = os.environ.get("MTCVR_HANDS_MEAN", "/data/Humanoid/UMR/smpl/SMPLX_NEUTRAL.npz")
+HAND_JOINTS = (25, 55)                           # SMPL-X joints 25..39 left hand, 40..54 right hand
 N_BETAS = 16
 N_JOINTS = 55
 N_BODY = 21                                      # body_pose joints 1..21
@@ -65,7 +69,8 @@ def matrix_to_axis_angle(R):
 
 
 class SMPLX(torch.nn.Module):
-    def __init__(self, gender="neutral", device="cuda", dtype=torch.float32):
+    def __init__(self, gender="neutral", device="cuda", dtype=torch.float32, hands="flat"):
+        """hands: "flat" (hand pose 0, as fitted) or "relaxed" (MANO mean hand pose, for display)."""
         super().__init__()
         d = np.load(os.path.join(BODY_MODELS, "smplx", f"SMPLX_{gender.upper()}.npz"), allow_pickle=True)
         t = lambda a: torch.tensor(np.asarray(a), dtype=dtype, device=device)  # noqa: E731
@@ -79,6 +84,11 @@ class SMPLX(torch.nn.Module):
         self.parents[0] = -1
         self.n_verts = self.v_template.shape[0]
         self.device, self.dtype = device, dtype
+        self.hand_R = None
+        if hands == "relaxed":
+            h = np.load(HANDS_MEAN_FILE, allow_pickle=True)
+            aa = np.concatenate([h["hands_meanl"], h["hands_meanr"]]).reshape(30, 3)
+            self.hand_R = axis_angle_to_matrix(torch.tensor(aa, dtype=dtype, device=device))
 
     # -------------------------------------------------------------------------------------- pieces
     def shaped(self, betas):
@@ -92,6 +102,8 @@ class SMPLX(torch.nn.Module):
         R = torch.eye(3, dtype=self.dtype, device=self.device).expand(N, N_JOINTS, 3, 3).clone()
         R[:, 0] = R_glob
         R[:, 1:1 + N_BODY] = R_body
+        if self.hand_R is not None:
+            R[:, HAND_JOINTS[0]:HAND_JOINTS[1]] = self.hand_R
         return R
 
     def rigid_transforms(self, R, J):

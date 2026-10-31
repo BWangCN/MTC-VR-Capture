@@ -143,7 +143,7 @@ def body_payload(take, al, fit_path, step, cache):
     import smplx_model as sm
     if "bm" not in cache:
         dev = "cuda" if torch.cuda.is_available() else "cpu"
-        cache["bm"] = sm.SMPLX("neutral", dev)
+        cache["bm"] = sm.SMPLX("neutral", dev, hands="relaxed")       # display: MANO mean hand pose
         cache["red"] = bfs.mesh_reduction(cache["bm"])
     bm, (inv, faces, n_red) = cache["bm"], cache["red"]
     fit = np.load(fit_path)

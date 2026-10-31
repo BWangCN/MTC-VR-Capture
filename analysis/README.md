@@ -169,3 +169,8 @@ $PY analysis/compose_pip.py                                               # -> d
 - First-person camera: the Pico rigid body as Unity placed it (VR scale, eye at about 1.30 m), front = rigid body
   +X, up = +Z. Its forward matches the camera rotation Unity logged to a median of 1.9-3.8 deg per take.
   Course objects and route markers are rasterised with PyTorch3D and composited by depth over the 3DGS.
+- Hands in the videos and on the website: the MANO mean ("relaxed") hand pose, read at run time from an official
+  SMPL-X v1.1 file (`MTCVR_HANDS_MEAN`, default `/data/Humanoid/UMR/smpl/SMPLX_NEUTRAL.npz`; the Marker2SMPLX model
+  files lack `hands_meanl/r`). The fits keep hand pose 0 (no finger markers); a standard `smplx` loader with its
+  default `flat_hand_mean=False` shows the same relaxed hands. The display mesh keeps hand vertices at full
+  resolution (vertex clustering at 2 cm elsewhere); clustering fingers at 2.5 cm had torn them apart.
